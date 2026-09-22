@@ -24,6 +24,11 @@ contract MockBlacklistERC20 is ERC20 {
         _mint(to, amount);
     }
 
+    /// @notice Simulate an issuer seizure for impairment tests.
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
+
     /// @notice Toggle whether transfers to `account` revert. Set AFTER minting to `account`.
     function setBlocked(address account, bool value) external {
         blocked[account] = value;

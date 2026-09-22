@@ -17,6 +17,14 @@ contract SpokeShareLibHarness {
         return SpokeShareLib.sharesForDeposit(valueIn, poolValueBefore, totalShares);
     }
 
+    function sharesForDepositOrZero(uint256 valueIn, uint256 poolValueBefore, uint256 totalShares)
+        external
+        pure
+        returns (uint256)
+    {
+        return SpokeShareLib.sharesForDepositOrZero(valueIn, poolValueBefore, totalShares);
+    }
+
     function valueForShares(uint256 sharesIn, uint256 poolValue, uint256 totalShares) external pure returns (uint256) {
         return SpokeShareLib.valueForShares(sharesIn, poolValue, totalShares);
     }
@@ -118,6 +126,15 @@ contract SpokeShareLibTest is Test {
     function test_sharesForDepositOrZero_extremeDustReturnsZero() public pure {
         // valueIn * totalShares < poolValue -> floor is 0. sharesForDeposit would revert here.
         assertEq(SpokeShareLib.sharesForDepositOrZero(1, 1_000e6, 1), 0, "extreme dust -> 0 shares, no revert");
+    }
+
+    function testFuzz_fullyImpairedRejectsBothMintPaths(uint256 valueIn, uint256 totalShares) public {
+        valueIn = bound(valueIn, 1, CAP);
+        totalShares = bound(totalShares, 1, CAP);
+        vm.expectRevert(SpokeShareLib.PoolFullyImpaired.selector);
+        h.sharesForDeposit(valueIn, 0, totalShares);
+        vm.expectRevert(SpokeShareLib.PoolFullyImpaired.selector);
+        h.sharesForDepositOrZero(valueIn, 0, totalShares);
     }
 
     // ============ Reverts ============

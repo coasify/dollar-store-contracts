@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -147,7 +147,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.9.4-U2";
+        return "0.9.5-U2";
     }
 
     // ============ Two-step Role Transfers ============
@@ -286,7 +286,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated. A spoke can only be removed once fully drained: no spoke reserves, no
-    ///      dlrsReserve, no LP shares, and no queued depth on any route touching the spoke asset. Kills
+    ///      dlrsReserve and no queued depth on any route touching the spoke asset. Kills
     ///      the pool by pausing it and unlisting its assets; the poolId is retired but the pool stays as
     ///      a tombstone in the array so later poolIds never shift. Body lives in SpokeLifecycleLib to
     ///      keep this implementation under the EIP-170 runtime size limit (delegatecall, same storage).
@@ -858,6 +858,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     function unpausePool(uint16 poolId) external override onlyGuardian {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        if (r.pools[poolId].status == RegistryStorage.PoolStatus.Killed) revert PoolKilled(poolId);
         r.pools[poolId].paused = false;
         emit PoolPausedSet(poolId, false);
     }

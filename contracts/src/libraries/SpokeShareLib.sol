@@ -11,8 +11,8 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /// @dev All rounding is DOWN (against the caller): a depositor never mints more claim than the value
 ///      they add, and a redeemer never draws more than their share. No MINIMUM_LIQUIDITY lock is used
 ///      because `poolValue` is INTERNAL accounting, not `balanceOf`, so the classic donate-to-inflate
-///      first-depositor attack is impossible; keeping total shares able to reach zero also lets a fully
-///      wound-down spoke reach the all-zero state required by removePool.
+///      first-depositor attack is impossible. Fully impaired shares can remain in a killed pool as
+///      historical records; restarting the asset requires a fresh poolId.
 /// @custom:security-contact admin@dollarstore.world
 library SpokeShareLib {
     /// @notice Deposit value must be non-zero.
@@ -21,13 +21,15 @@ library SpokeShareLib {
     error ZeroShares();
     /// @notice A deposit was too small to mint any shares at the current share price.
     error DepositTooSmall();
+    /// @notice Outstanding shares have no backing; new capital must not revive their claims.
+    error PoolFullyImpaired();
     /// @notice Requested more shares than the pool has outstanding.
     error InsufficientShares(uint256 requested, uint256 available);
 
     /// @notice Shares to mint for depositing `valueIn` into a spoke pool.
     /// @dev First LP into an empty pool mints 1:1 with value. Otherwise shares are pro-rata against the
     ///      pool value BEFORE this deposit, rounded down. Reverts if the deposit is too small to mint a
-    ///      whole share (which would otherwise donate the value to existing LPs).
+    ///      whole share, or if outstanding shares have zero backing.
     /// @param valueIn Deposited value in normalized 6dp units.
     /// @param poolValueBefore Pool value (spokeReserve + dlrsReserve) BEFORE this deposit, 6dp.
     /// @param totalShares Outstanding shares BEFORE this deposit.
@@ -38,9 +40,10 @@ library SpokeShareLib {
         returns (uint256 shares)
     {
         if (valueIn == 0) revert ZeroValue();
-        if (totalShares == 0 || poolValueBefore == 0) {
+        if (totalShares == 0) {
             return valueIn; // first LP: 1:1
         }
+        if (poolValueBefore == 0) revert PoolFullyImpaired();
         shares = Math.mulDiv(valueIn, totalShares, poolValueBefore); // floor
         if (shares == 0) revert DepositTooSmall();
     }
@@ -48,14 +51,15 @@ library SpokeShareLib {
     /// @notice Like {sharesForDeposit} but returns 0 instead of reverting when the value is too small
     ///         to mint a whole share. For fallback paths (blacklist eject converting escrow into a
     ///         receipt) where reverting would brick the queue; the negligible dust simply accrues to
-    ///         existing LPs rather than blocking the eject.
+    ///         existing LPs rather than blocking the eject. Full impairment still reverts, preserving escrow.
     function sharesForDepositOrZero(uint256 valueIn, uint256 poolValueBefore, uint256 totalShares)
         internal
         pure
         returns (uint256 shares)
     {
         if (valueIn == 0) return 0;
-        if (totalShares == 0 || poolValueBefore == 0) return valueIn;
+        if (totalShares == 0) return valueIn;
+        if (poolValueBefore == 0) revert PoolFullyImpaired();
         return Math.mulDiv(valueIn, totalShares, poolValueBefore); // floor, may be 0 for extreme dust
     }
 
