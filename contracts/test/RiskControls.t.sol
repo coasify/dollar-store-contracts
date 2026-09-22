@@ -11,7 +11,7 @@ import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 
-/// @notice M5: pauses (asset/pool), oracle peg check, syncReserves/rescueTokens, adminCancelQueue.
+/// @notice M5: pauses (asset/pool), oracle peg check, syncReserves/rescueTokens.
 contract RiskControlsTest is Test {
     DollarStore internal store;
     DLRS internal dlrs;
@@ -288,39 +288,6 @@ contract RiskControlsTest is Test {
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.NoExcessTokens.selector, address(usdc)));
         store.rescueTokens(address(usdc), bob);
-    }
-
-    // ============ adminCancelQueue ============
-
-    function test_adminCancelQueue_returnsEscrow() public {
-        // Alice queues USDC->USDT (no USDT reserves).
-        vm.startPrank(alice);
-        usdc.approve(address(store), 1_000e6);
-        store.swap(address(usdc), address(usdt), 1_000e6, 0, 0, block.timestamp);
-        vm.stopPrank();
-
-        uint256 id = store.getUserQueuePositions(alice)[0];
-        vm.prank(guardian);
-        store.adminCancelQueue(id);
-
-        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 0, "queue emptied");
-        assertEq(usdc.balanceOf(alice), 1_000_000e6, "escrow returned to owner");
-    }
-
-    function test_adminCancelQueue_onlyGuardian() public {
-        vm.startPrank(alice);
-        usdc.approve(address(store), 1_000e6);
-        store.swap(address(usdc), address(usdt), 1_000e6, 0, 0, block.timestamp);
-        uint256 id = store.getUserQueuePositions(alice)[0];
-        vm.expectRevert(IDollarStore.OnlyGuardian.selector);
-        store.adminCancelQueue(id);
-        vm.stopPrank();
-    }
-
-    function test_adminCancelQueue_revertsNotFound() public {
-        vm.prank(guardian);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.QueuePositionNotFound.selector, uint256(999)));
-        store.adminCancelQueue(999);
     }
 
     // ============ Unpause (deposits / pool) ============

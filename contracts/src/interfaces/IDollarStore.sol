@@ -423,9 +423,6 @@ interface IDollarStore {
     /// @notice Sweep unaccounted excess tokens (accidental transfers / unlisted assets).
     ///         Governor-gated (via timelock): it moves tokens out of the contract.
     function rescueTokens(address asset, address to) external;
-    /// @notice Force-cancel any queue position, returning escrow to its owner. Guardian-gated.
-    function adminCancelQueue(uint256 positionId) external;
-
     /// @notice Whether deposits/inflows of an asset are paused.
     function isDepositPaused(address asset) external view returns (bool);
     /// @notice Whether a pool is paused.

@@ -73,7 +73,6 @@ Guardian-gated functions:
 - `pause` / `unpause` (global)
 - `pauseDeposits` / `unpauseDeposits` (per asset)
 - `pausePool` / `unpausePool`
-- `adminCancelQueue` (force-cancel a queue position, returning escrow to its owner)
 - `lowerLaunchCap` (tighten a cap; can never loosen or remove it)
 
 Rationale: the worst thing a compromised guardian can do is stop or slow the

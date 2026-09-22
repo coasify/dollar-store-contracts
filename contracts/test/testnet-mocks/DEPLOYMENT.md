@@ -14,8 +14,23 @@ Testnet only; not part of the real `src/` protocol.
 |---|---|---|---|---|
 | Mock USDC | `0x0a9479f7aff770965b3b2D28b29E40C3F6168588` | 6 | yes | [link](https://sepolia.etherscan.io/address/0x0a9479f7aff770965b3b2D28b29E40C3F6168588#code) |
 | Mock USDT | `0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05` | 6 | yes | [link](https://sepolia.etherscan.io/address/0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05#code) |
+| Mock USDS | `0xdB82d075db6c2e30353825D78C21F472C2252D25` | 18 | yes | [link](https://sepolia.etherscan.io/address/0xdB82d075db6c2e30353825D78C21F472C2252D25#code) |
 
-Decimals = 6 on both, same as real USDC/USDT on Ethereum.
+USDC/USDT use 6 decimals (same as the real assets on Ethereum); USDS uses 18 (same as real Sky USDS).
+
+## USDS addition (2026-08-20)
+
+The hub topology moved to **USDC + USDS**, with **USDT** becoming the first spoke. USDC and USDT
+mocks were reused as-is; only the USDS mock was added.
+
+**Network:** Sepolia (chain id 11155111) · **Block:** 11531508 · **Gas used:** 558752
+**Script:** `DeployMockStables` with `DEPLOY_USDS=true` (USDC/USDT flags off, so they were not redeployed).
+
+| What | Value |
+|---|---|
+| Deploy tx | `0xffe814c3451d0867268a1f173c2f7f6b20e1611c4ebb9c486a5b0e3f259a7a45` |
+| Constructor args | `("USDS (Mock)", "USDS", 18)` |
+| Verification | direct macOS `--verify`, Etherscan `Pass - Verified` (small contract, no `via_ir` divergence) |
 
 ## Deploy transactions
 
