@@ -56,7 +56,7 @@ contract RiskControlsTest is Test {
 
     function test_defaults() public view {
         assertEq(store.pegTolerance(), 50, "0.5%");
-        assertEq(store.maxStaleness(), 3600, "1h");
+        assertEq(store.maxStaleness(), 90_000, "25h, clears the 24h mainnet heartbeat");
     }
 
     // ============ Per-asset deposit pause ============
@@ -158,7 +158,7 @@ contract RiskControlsTest is Test {
 
     function test_peg_revertsStalePrice() public {
         vm.warp(100_000);
-        feed.setUpdatedAt(100_000 - 3601); // older than maxStaleness (3600)
+        feed.setUpdatedAt(100_000 - (store.maxStaleness() + 1)); // one second past the window
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceStale.selector);
@@ -204,7 +204,7 @@ contract RiskControlsTest is Test {
 
     function test_peg_swap_revertsStalePrice() public {
         vm.warp(100_000);
-        feed.setUpdatedAt(100_000 - 3601); // older than maxStaleness (3600)
+        feed.setUpdatedAt(100_000 - (store.maxStaleness() + 1)); // one second past the window
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceStale.selector);
@@ -232,9 +232,27 @@ contract RiskControlsTest is Test {
     }
 
     function test_setMaxStaleness_bounds() public {
+        // Zero would accept any answer however old; above the ceiling would accept one a day past the
+        // heartbeat it is meant to track.
         vm.prank(governor);
         vm.expectRevert(IDollarStore.InvalidStaleness.selector);
-        store.setMaxStaleness(2 days);
+        store.setMaxStaleness(0);
+
+        vm.prank(governor);
+        vm.expectRevert(IDollarStore.InvalidStaleness.selector);
+        store.setMaxStaleness(3 days + 1);
+
+        // The value mainnet actually needs: the 24h heartbeat plus margin.
+        vm.prank(governor);
+        store.setMaxStaleness(25 hours);
+        assertEq(store.maxStaleness(), 25 hours, "staleness set");
+    }
+
+    function test_initialMaxStalenessClearsMainnetHeartbeat() public view {
+        // A deploy must be able to trade from block one. Chainlink's mainnet stablecoin feeds run on a
+        // 24h heartbeat, so an initial window at or below it would revert every swap until a governor
+        // action lands, which takes the governor timelock delay to execute.
+        assertGt(store.maxStaleness(), 24 hours, "initial staleness clears the 24h heartbeat");
     }
 
     function test_setPriceFeed() public {

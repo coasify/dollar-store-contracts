@@ -27,8 +27,8 @@ import {DollarStore} from "../src/DollarStore.sol";
 ///      - UPGRADER_SAFE (required): operator Safe of the upgrader timelock.
 ///      - GOVERNOR_SAFE (optional): operator Safe of the governor timelock. Default = UPGRADER_SAFE.
 ///      - GUARDIAN_SAFE (optional): the guardian Safe. Default = UPGRADER_SAFE.
-///      - UPGRADER_DELAY (optional, seconds): upgrader timelock minDelay. Default 604800 (7d).
-///      - GOVERNOR_DELAY (optional, seconds): governor timelock minDelay. Default 172800 (2d).
+///      - UPGRADER_DELAY (optional, seconds): upgrader timelock minDelay. Default 1209600 (14d).
+///      - GOVERNOR_DELAY (optional, seconds): governor timelock minDelay. Default 604800 (7d).
 contract DeployGovernance is Script {
     /// @notice Addresses produced by a governance deploy.
     struct Deployed {
@@ -92,8 +92,11 @@ contract DeployGovernance is Script {
         address upgraderSafe = vm.envAddress("UPGRADER_SAFE");
         address governorSafe = vm.envOr("GOVERNOR_SAFE", upgraderSafe);
         address guardianSafe = vm.envOr("GUARDIAN_SAFE", upgraderSafe);
-        uint256 upgraderDelay = vm.envOr("UPGRADER_DELAY", uint256(7 days));
-        uint256 governorDelay = vm.envOr("GOVERNOR_DELAY", uint256(2 days));
+        // Mainnet values, agreed 2026-09-22: an upgrade is the change nobody should be able to rush, so
+        // it carries two weeks. A governor action carries one full working week, which is the window
+        // someone needs to see a queued operation and react to it before it executes.
+        uint256 upgraderDelay = vm.envOr("UPGRADER_DELAY", uint256(14 days));
+        uint256 governorDelay = vm.envOr("GOVERNOR_DELAY", uint256(7 days));
 
         vm.startBroadcast(deployerKey);
         Deployed memory d =
