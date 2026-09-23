@@ -98,8 +98,7 @@ contract CreateSpoke is Script {
             TimelockController tl,
             address[] memory targets,
             uint256[] memory values,
-            bytes[] memory payloads,
-            ,
+            bytes[] memory payloads,,
             bytes32 salt,
             uint16 expectedPoolId
         ) = _params();

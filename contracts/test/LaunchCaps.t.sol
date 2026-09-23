@@ -214,8 +214,7 @@ contract LaunchCapsTest is Test {
         TimelockController governorTL = new TimelockController(2 days, proposers, executors, address(0));
 
         DollarStore impl = new DollarStore();
-        bytes memory initData =
-            abi.encodeCall(DollarStore.initialize, (upgrader, address(governorTL), guardian));
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, address(governorTL), guardian));
         DollarStore timelocked = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
 
         vm.startPrank(address(governorTL));
@@ -247,9 +246,7 @@ contract LaunchCapsTest is Test {
         spokeAsset.mint(alice, 300_000e18);
         vm.startPrank(alice);
         spokeAsset.approve(address(timelocked), 300_000e18);
-        vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, expectedPoolId, 300_000e6, cap)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, expectedPoolId, 300_000e6, cap));
         timelocked.deposit(expectedPoolId, address(spokeAsset), 300_000e18, block.timestamp);
         vm.stopPrank();
     }
