@@ -173,7 +173,8 @@ interface IDollarStore {
     /// @notice Kill a spoke with zero spoke reserves, zero dlrsReserve, and empty queues.
     ///         Worthless LP shares remain as historical records in the retired poolId. Pauses the pool
     ///         and unlists its assets; governance may relist them in a fresh pool. Governor-gated.
-    ///         The hub and already-killed pools cannot be removed.
+    ///         The hub and already-killed pools cannot be removed. Parked escrow of the spoke asset does
+    ///         not block removal; afterwards it stays cancellable and subject to haircutEscrow.
     function removePool(uint16 poolId) external;
 
     /// @notice Proportionally redeem `shares` of a spoke: pays the pro-rata slice of BOTH the spoke
@@ -224,7 +225,8 @@ interface IDollarStore {
     /// @notice Guardian emergency: apply a pro-rata haircut to the queue escrow of a balance-impaired
     ///         asset (actual token balance < accounted reserves + escrow), so the escrow accounting
     ///         matches the surviving balance. Only while the asset's pool is paused. Iterates the queues
-    ///         where `asset` is the offer, bounded by `maxPositions` (reverts if exceeded).
+    ///         where `asset` is the offer, including the parked line, bounded by `maxPositions` (reverts
+    ///         if exceeded). A removed spoke's asset is accepted while it still carries parked escrow.
     /// @return removedUnits The normalized 6dp escrow removed by the haircut.
     function haircutEscrow(address asset, uint256 maxPositions) external returns (uint256 removedUnits);
 
@@ -290,9 +292,10 @@ interface IDollarStore {
     event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
     /// @notice Emitted when a queue position is cancelled and its escrow returned.
     event QueueCancelled(uint256 indexed positionId, address indexed owner, uint256 amountReturned);
-    /// @notice Emitted when a fill/cancel transfer fails and the escrow is converted to a DLRS
-    ///         claim (moved into hub reserves + DLRS minted to the owner) instead of bricking.
-    event QueuePositionRefunded(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
+    /// @notice Emitted when a position is parked: a transfer to its owner failed, so it is lifted out of
+    ///         its directed queue and held on the parked line for its offer asset. Escrow is untouched;
+    ///         the owner exits by cancelQueue once the transfer can succeed.
+    event QueueParked(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
 
     /// @notice offerAsset == wantAsset is not a valid swap.
     error SameAsset();
@@ -312,6 +315,8 @@ interface IDollarStore {
     error QueuePositionNotFound(uint256 positionId);
     /// @notice The caller does not own this queue position.
     error NotPositionOwner(uint256 positionId, address caller);
+    /// @notice Cancelling a parked position: the escrow transfer to its owner failed.
+    error EscrowTransferFailed(uint256 positionId);
 
     /// @notice Swap `offerAsset` for `wantAsset` (1:1 in normalized units). Fills from the
     ///         exact-opposite queue then protocol reserves; queues any remainder.
@@ -342,7 +347,9 @@ interface IDollarStore {
         uint256 deadline
     ) external returns (uint256 amountOut);
 
-    /// @notice Cancel a queue position and return the escrowed offer asset (or DLRS fallback).
+    /// @notice Cancel a queue position and return the escrowed offer asset. If the transfer fails, a
+    ///         queued position is parked (see QueueParked) and a parked position reverts
+    ///         EscrowTransferFailed. Escrow only ever leaves as the offered asset.
     function cancelQueue(uint256 positionId) external;
 
     /// @notice Permissionless bounded fallback: fill up to `maxPositions` of the (offerAsset ->
@@ -360,8 +367,11 @@ interface IDollarStore {
         external
         view
         returns (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp);
-    /// @notice All position ids owned by a user.
+    /// @notice All position ids owned by a user (queued and parked).
     function getUserQueuePositions(address user) external view returns (uint256[] memory);
+    /// @notice Whether a position is parked (see QueueParked). getQueueDepth(asset, address(0)) is the
+    ///         total parked escrow of `asset`.
+    function isQueuePositionParked(uint256 positionId) external view returns (bool);
     /// @notice Current minimum order size to queue into the (offerAsset -> wantAsset) queue.
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view returns (uint256);
     /// @notice Instantly fillable amount for a swap (normalized 6dp), respecting FIFO availability
@@ -425,7 +435,7 @@ interface IDollarStore {
     ///         external balance loss. Only decreases. Governor-gated (via timelock): it marks down
     ///         DLRS backing, so it is a governance decision, not a fast emergency action.
     function syncReserves(uint16 poolId, address asset) external;
-    /// @notice Sweep unaccounted excess tokens (accidental transfers / unlisted assets).
+    /// @notice Sweep unaccounted excess tokens (accidental transfers / never-listed assets).
     ///         Governor-gated (via timelock): it moves tokens out of the contract.
     function rescueTokens(address asset, address to) external;
     /// @notice Whether deposits/inflows of an asset are paused.

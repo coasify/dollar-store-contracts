@@ -48,21 +48,6 @@ library SpokeShareLib {
         if (shares == 0) revert DepositTooSmall();
     }
 
-    /// @notice Like {sharesForDeposit} but returns 0 instead of reverting when the value is too small
-    ///         to mint a whole share. For fallback paths (blacklist eject converting escrow into a
-    ///         receipt) where reverting would brick the queue; the negligible dust simply accrues to
-    ///         existing LPs rather than blocking the eject. Full impairment still reverts, preserving escrow.
-    function sharesForDepositOrZero(uint256 valueIn, uint256 poolValueBefore, uint256 totalShares)
-        internal
-        pure
-        returns (uint256 shares)
-    {
-        if (valueIn == 0) return 0;
-        if (totalShares == 0) return valueIn;
-        if (poolValueBefore == 0) revert PoolFullyImpaired();
-        return Math.mulDiv(valueIn, totalShares, poolValueBefore); // floor, may be 0 for extreme dust
-    }
-
     /// @notice Value redeemable for burning `sharesIn` of a spoke pool.
     /// @dev Pro-rata against current pool value, rounded down. If the pool is value-impaired
     ///      (poolValue < totalShares after a write-down), each share simply pays less, sharing the loss.

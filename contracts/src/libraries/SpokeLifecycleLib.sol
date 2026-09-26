@@ -55,6 +55,8 @@ library SpokeLifecycleLib {
     }
 
     /// @notice Kill a zero-reserve spoke, retaining any worthless shares as historical records (see IDollarStore.removePool).
+    /// @dev Parked escrow of the spoke asset does not block removal: it is outside every directed queue
+    ///      and outside the pool. Afterwards it stays cancellable by its owner and subject to haircutEscrow.
     function removePool(uint16 poolId) external {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.Pool storage p = _spoke(r, poolId);
@@ -85,11 +87,12 @@ library SpokeLifecycleLib {
     function haircutEscrow(address asset, uint256 maxPositions) external returns (uint256 removedUnits) {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
-        if (!cfg.listed) revert IDollarStore.AssetNotListed(asset);
-        if (!r.pools[cfg.poolId].paused) revert IDollarStore.PoolNotPaused(cfg.poolId);
-
         QueueStorage.Layout storage qs = QueueStorage.layout();
         uint256 escrow = qs.totalEscrowedByAsset[asset];
+        // A removed spoke's asset is unlisted but can still carry parked escrow, which shares a loss
+        // like any other escrow; its pool is left paused by removal.
+        if (!cfg.listed && escrow == 0) revert IDollarStore.AssetNotListed(asset);
+        if (!r.pools[cfg.poolId].paused) revert IDollarStore.PoolNotPaused(cfg.poolId);
         if (escrow == 0) revert IDollarStore.NoEscrowToHaircut(asset);
 
         uint256 actualUnits = IERC20(asset).balanceOf(address(this)) / cfg.scalingFactor;
@@ -108,6 +111,8 @@ library SpokeLifecycleLib {
                 budget = _haircutQueue(qs, asset, want, targetEscrow, escrow, budget);
             }
         }
+        // Parked positions hold escrow of `asset` too and share the loss pro-rata like any other line.
+        budget = _haircutQueue(qs, asset, address(0), targetEscrow, escrow, budget);
 
         uint256 newEscrow = qs.totalEscrowedByAsset[asset];
         removedUnits = escrow - newEscrow;

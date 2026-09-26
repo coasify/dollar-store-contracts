@@ -13,11 +13,11 @@ import {MockReentrantERC20} from "./mocks/MockReentrantERC20.sol";
 import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 
-/// @notice M4 edge coverage: failed-transfer (blacklist) fallbacks, linked-list surgery on
+/// @notice M4 edge coverage: failed-transfer parking, linked-list surgery on
 ///         middle/multi removals, partial opposite-queue consumption, multi-position matching,
 ///         userPositions swap-and-pop, reentrancy blocking, cross-decimal swaps, and views.
 /// @dev Complements HubSwapQueue.t.sol (happy paths). Assets use MockBlacklistERC20 so any owner
-///      can be frozen mid-flow to trigger the escrow -> DLRS-claim fallbacks. usdc/usdt are 6dp
+///      can be frozen mid-flow so a payout fails and the position parks. usdc/usdt are 6dp
 ///      (units == native); dai is 18dp for the cross-decimal cases.
 contract HubSwapFallbackTest is Test {
     DollarStore internal store;
@@ -35,7 +35,7 @@ contract HubSwapFallbackTest is Test {
     MockBlacklistERC20 internal dai; //  18dp
     MockAggregatorV3 internal feed; // $1 mock oracle
 
-    event QueuePositionRefunded(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
+    event QueueParked(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
 
     function setUp() public {
         DollarStore impl = new DollarStore();
@@ -86,10 +86,10 @@ contract HubSwapFallbackTest is Test {
             store.getReserve(0, address(usdc)) + store.getReserve(0, address(usdt)) + store.getReserve(0, address(dai));
     }
 
-    // ============ Failed-transfer fallbacks (escrow -> DLRS claim) ============
+    // ============ Failed transfers: the position is parked ============
 
-    /// @notice _fillDirected: paying a matched opposite-queue owner fails -> eject + mint DLRS,
-    ///         and the swapper still gets filled from the reserves the ejection created.
+    /// @notice fillDirected: paying a matched opposite-queue owner fails -> the position is parked. Its
+    ///         escrow stays escrow, so the swapper cannot draw on it.
     function test_swap_matchFallback_whenOppositeOwnerBlacklisted() public {
         _swap(alice, usdc, usdt, 1_000e6, 0); // alice queues USDC->USDT (escrows 1000 USDC)
         uint256 aliceId = store.getUserQueuePositions(alice)[0];
@@ -97,26 +97,26 @@ contract HubSwapFallbackTest is Test {
         usdt.setBlocked(alice, true); // alice can no longer receive USDT
 
         // bob swaps USDT->USDC: the protocol tries to pay alice in USDT (bob's offer) and fails.
-        // Inline the approve BEFORE expectEmit so the next event is QueuePositionRefunded, not the
-        // Approval that the _swap() helper would emit first.
         vm.startPrank(bob);
         usdt.approve(address(store), 1_000e6);
         vm.expectEmit(true, true, false, true, address(store));
-        emit QueuePositionRefunded(aliceId, alice, address(usdc), 1_000e6);
+        emit QueueParked(aliceId, alice, address(usdc), 1_000e6);
         (uint256 filled, uint256 queued) = store.swap(address(usdt), address(usdc), 1_000e6, 0, 0, block.timestamp);
         vm.stopPrank();
 
-        // Alice's escrow became a DLRS claim; bob still filled fully from the freed reserves.
-        assertEq(filled, 1_000e6, "bob filled from freed reserves");
-        assertEq(queued, 0, "bob nothing queued");
+        // Alice's 1000 USDC stays parked as escrow, and the hub holds no USDC reserve, so bob fills nothing.
+        assertEq(filled, 0, "bob cannot draw on alice's escrow");
+        assertEq(queued, 1_000e6, "bob's whole order queued");
         assertEq(usdt.balanceOf(alice), 1_000_000e6, "alice received no USDT (blocked)");
-        assertEq(dlrs.balanceOf(alice), 1_000e6, "alice got a DLRS claim instead");
-        assertEq(store.getUserQueuePositions(alice).length, 0, "alice position ejected");
-        assertEq(usdc.balanceOf(bob), 1_000_000e6 + 1_000e6, "bob got USDC");
+        assertEq(dlrs.balanceOf(alice), 0, "alice holds no DLRS");
+        assertTrue(store.isQueuePositionParked(aliceId), "alice position parked");
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 0, "line advanced past alice");
+        assertEq(store.getQueueDepth(address(usdc), address(0)), 1_000e6, "parked escrow");
         assertEq(dlrs.totalSupply(), _reserveSum(), "invariant: DLRS supply == sum reserves");
     }
 
-    /// @notice cancelQueue: refunding the owner's escrow fails -> escrow -> reserves + mint DLRS.
+    /// @notice cancelQueue: returning the escrow fails -> parked. A second cancel while still blocked
+    ///         reverts. Once unblocked, cancel returns the USDC.
     function test_cancelQueue_fallback_whenOwnerBlacklisted() public {
         _swap(alice, usdc, usdt, 1_000e6, 0); // escrows 1000 USDC
         uint256 id = store.getUserQueuePositions(alice)[0];
@@ -124,18 +124,29 @@ contract HubSwapFallbackTest is Test {
         usdc.setBlocked(alice, true); // alice can no longer receive USDC
 
         vm.expectEmit(true, true, false, true, address(store));
-        emit QueuePositionRefunded(id, alice, address(usdc), 1_000e6);
+        emit QueueParked(id, alice, address(usdc), 1_000e6);
         vm.prank(alice);
         store.cancelQueue(id);
 
         assertEq(usdc.balanceOf(alice), 1_000_000e6 - 1_000e6, "escrow NOT returned as tokens");
-        assertEq(dlrs.balanceOf(alice), 1_000e6, "escrow converted to DLRS claim");
-        assertEq(store.getReserve(0, address(usdc)), 1_000e6, "escrow moved into reserves");
-        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 0, "position removed");
+        assertEq(dlrs.balanceOf(alice), 0, "alice holds no DLRS");
+        assertEq(store.getReserve(0, address(usdc)), 0, "escrow is not in reserves");
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 0, "position left the line");
+        assertTrue(store.isQueuePositionParked(id));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowTransferFailed.selector, id));
+        store.cancelQueue(id);
+
+        usdc.setBlocked(alice, false);
+        vm.prank(alice);
+        store.cancelQueue(id);
+        assertEq(usdc.balanceOf(alice), 1_000_000e6, "escrow returned once the issuer allows it");
+        assertEq(store.getUserQueuePositions(alice).length, 0);
         assertEq(dlrs.totalSupply(), _reserveSum(), "invariant: DLRS supply == sum reserves");
     }
 
-    /// @notice processQueue: paying the queued owner fails -> eject + mint DLRS, reserves preserved.
+    /// @notice processQueue: paying the queued owner fails -> parked, reserves untouched.
     function test_processQueue_fallback_whenOwnerBlacklisted() public {
         _swap(alice, usdc, usdt, 1_000e6, 0); // alice queues USDC->USDT (escrows 1000 USDC)
         uint256 id = store.getUserQueuePositions(alice)[0];
@@ -144,16 +155,17 @@ contract HubSwapFallbackTest is Test {
         usdt.setBlocked(alice, true); // alice can no longer receive USDT
 
         vm.expectEmit(true, true, false, true, address(store));
-        emit QueuePositionRefunded(id, alice, address(usdc), 1_000e6);
+        emit QueueParked(id, alice, address(usdc), 1_000e6);
         vm.prank(carol);
         (uint256 processed, uint256 amountFilled) = store.processQueue(address(usdc), address(usdt), 10);
 
         assertEq(processed, 1, "one position processed");
         assertEq(amountFilled, 0, "nothing paid out (owner frozen)");
         assertEq(usdt.balanceOf(alice), 1_000_000e6, "alice received no USDT");
-        assertEq(dlrs.balanceOf(alice), 1_000e6, "alice got a DLRS claim");
-        assertEq(store.getReserve(0, address(usdc)), 1_000e6, "escrowed USDC moved to reserves");
+        assertEq(dlrs.balanceOf(alice), 0, "alice holds no DLRS");
+        assertEq(store.getReserve(0, address(usdc)), 0, "escrowed USDC is not in reserves");
         assertEq(store.getReserve(0, address(usdt)), 1_000e6, "USDT reserves untouched");
+        assertTrue(store.isQueuePositionParked(id));
         assertEq(dlrs.totalSupply(), _reserveSum(), "invariant: DLRS supply == sum reserves");
     }
 

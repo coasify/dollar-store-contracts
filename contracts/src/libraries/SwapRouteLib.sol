@@ -7,16 +7,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IDollarStore} from "../interfaces/IDollarStore.sol";
 import {RegistryStorage} from "../storage/RegistryStorage.sol";
 import {QueueStorage} from "../storage/QueueStorage.sol";
-import {CoreStorage} from "../storage/CoreStorage.sol";
 import {NormalizationLib} from "./NormalizationLib.sol";
 import {QueueLib} from "./QueueLib.sol";
-import {SpokeShareLib} from "./SpokeShareLib.sol";
 import {PegLib} from "./PegLib.sol";
-import {DLRS} from "../DLRS.sol";
 
 /// @title SwapRouteLib - directed-swap routing, fill and FIFO settlement subsystem.
 /// @notice The full directed-queue swap engine (route classification + reserve-aware fills + FIFO
-///         same-direction settlement + escrow refund) extracted out of DollarStore so the
+///         same-direction settlement + cancel) extracted out of DollarStore so the
 ///         implementation fits under the EIP-170 24576-byte runtime limit while still shipping the
 ///         complete U2 feature set in a single deployment. The state-changing entrypoints (swap,
 ///         swapExactInput, processQueue, triggerSpokeQueues, cancelPosition) are `public`, so
@@ -63,7 +60,7 @@ library SwapRouteLib {
     );
     event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
     event QueueCancelled(uint256 indexed positionId, address indexed owner, uint256 amountReturned);
-    event QueuePositionRefunded(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
+    event QueueParked(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
 
     // ============ Public entrypoints (delegatecall from DollarStore) ============
 
@@ -174,16 +171,29 @@ library SwapRouteLib {
         }
     }
 
-    /// @notice Remove a position and return its escrow to the owner; on a failed transfer convert the
-    ///         escrow into the canonical receipt (see DollarStore._cancelPosition). Owner / existence /
-    ///         gating checks are performed by the DollarStore wrapper before delegating.
+    /// @notice Return a position's escrow to its owner and remove it. If the transfer fails, a queued
+    ///         position is parked so its queue can keep moving, and a parked position reverts so the
+    ///         owner can retry once the transfer can succeed. Owner / existence / gating checks are
+    ///         performed by the DollarStore wrapper before delegating.
+    /// @dev The transfer is attempted before the state change so a failure leaves the position intact.
+    ///      Safe because the wrapper is nonReentrant, so the token call cannot re-enter a mutator.
     function cancelPosition(uint256 positionId) external {
-        (address owner_, address offerAsset, uint256 amount) = QueueLib.remove(QueueStorage.layout(), positionId);
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+        QueueStorage.QueuePosition storage p = qs.positions[positionId];
+        address owner_ = p.owner;
+        address offerAsset = p.offerAsset;
+        uint256 amount = p.offerAmount;
+        bool wasParked = p.parked;
         uint64 scaling = RegistryStorage.layout().assetConfig[offerAsset].scalingFactor;
+
         if (tryTransfer(offerAsset, owner_, NormalizationLib.toNative(amount, scaling))) {
+            QueueLib.remove(qs, positionId);
             emit QueueCancelled(positionId, owner_, amount);
+        } else if (!wasParked) {
+            QueueLib.park(qs, positionId);
+            emit QueueParked(positionId, owner_, offerAsset, amount);
         } else {
-            refundEscrow(positionId, owner_, offerAsset, amount);
+            revert IDollarStore.EscrowTransferFailed(positionId);
         }
     }
 
@@ -346,10 +356,10 @@ library SwapRouteLib {
                     emit QueueFilled(current, o, fill, posAmt - fill);
                 }
             } else {
-                // Paying the queued owner failed: eject and convert its escrow into the canonical
-                // receipt (hub -> DLRS, spoke -> that spoke's shares), pool-aware (U2).
-                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
-                refundEscrow(current, owner_, escrowAsset, posAmt);
+                // The transfer to the queued owner failed: park the position so the queue keeps moving.
+                // Its escrow stays as it is, cancellable by the owner later.
+                QueueLib.park(qs, current);
+                emit QueueParked(current, o, wantAsset, posAmt);
             }
             current = next;
         }
@@ -372,8 +382,8 @@ library SwapRouteLib {
     }
 
     /// @dev Settles the (offerAsset -> wantAsset) queue from protocol reserves in FIFO order, bounded by
-    ///      `maxPositions`, using route-aware accounting. On a failed payout, ejects the position and
-    ///      converts its escrow into the canonical receipt. Callers must have inflow-gated `offerAsset`.
+    ///      `maxPositions`, using route-aware accounting. A position whose payout transfer fails is
+    ///      parked. Callers must have inflow-gated `offerAsset`.
     function settleSameDirection(Route memory route, address offerAsset, address wantAsset, uint256 maxPositions)
         internal
         returns (uint256 positionsProcessed, uint256 amountFilled)
@@ -404,8 +414,8 @@ library SwapRouteLib {
                     emit QueueFilled(current, o, fill, posAmt - fill);
                 }
             } else {
-                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
-                refundEscrow(current, owner_, escrowAsset, posAmt);
+                QueueLib.park(qs, current);
+                emit QueueParked(current, o, offerAsset, posAmt);
             }
 
             positionsProcessed += 1;
@@ -426,26 +436,5 @@ library SwapRouteLib {
 
         uint256 positionId = QueueLib.enqueue(qs, offerAsset, wantAsset, msg.sender, remaining);
         emit QueueJoined(positionId, msg.sender, offerAsset, wantAsset, remaining);
-    }
-
-    /// @dev Blacklist-safe fallback: convert an ejected position's escrow into its canonical receipt.
-    ///      HUB escrow -> hub reserves + DLRS minted 1:1. SPOKE escrow -> that spoke's reserve + receipt
-    ///      shares minted pro-rata (U2). Full impairment reverts, rolling back removal to preserve escrow.
-    function refundEscrow(uint256 positionId, address owner_, address escrowAsset, uint256 amount) internal {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        uint16 poolId = r.assetConfig[escrowAsset].poolId;
-        if (poolId == 0) {
-            r.reserves[0][escrowAsset] += amount;
-            DLRS(CoreStorage.layout().dlrs).mint(owner_, amount);
-        } else {
-            RegistryStorage.Pool storage p = r.pools[poolId];
-            uint256 shares = SpokeShareLib.sharesForDepositOrZero(
-                amount, r.reserves[poolId][escrowAsset] + p.dlrsReserve, r.receiptTotalShares[poolId]
-            );
-            r.reserves[poolId][escrowAsset] += amount;
-            r.receiptShares[poolId][owner_] += shares;
-            r.receiptTotalShares[poolId] += shares;
-        }
-        emit QueuePositionRefunded(positionId, owner_, escrowAsset, amount);
     }
 }

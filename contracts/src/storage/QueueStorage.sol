@@ -49,6 +49,10 @@ library QueueStorage {
     struct QueuePosition {
         /// @notice Owner of the position.
         address owner;
+        /// @notice True once the position is parked: lifted out of its directed queue because a transfer
+        ///         to the owner failed. Escrow is untouched and leaves only as the offered asset, via
+        ///         cancelQueue, once the transfer succeeds. Packs into `owner`'s slot.
+        bool parked;
         /// @notice Asset the user is offering (escrowed by the protocol).
         address offerAsset;
         /// @notice Asset the user wants to receive.
@@ -101,5 +105,13 @@ library QueueStorage {
     /// @return The keccak256 key used to index `queues`.
     function queueKey(address offerAsset, address wantAsset) internal pure returns (bytes32) {
         return keccak256(abi.encode(offerAsset, wantAsset));
+    }
+
+    /// @notice Key of the parked line for `offerAsset`: positions whose transfer to the owner failed.
+    ///         Their escrow is not fillable. Same formula as a directed queue with `wantAsset == 0`,
+    ///         which no route can target, so the line is reached only by its owner's cancel
+    ///         and by haircutEscrow.
+    function parkedKey(address offerAsset) internal pure returns (bytes32) {
+        return queueKey(offerAsset, address(0));
     }
 }

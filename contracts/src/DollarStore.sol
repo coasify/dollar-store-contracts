@@ -719,8 +719,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    /// @dev Exit path: not blocked by pause. Returns the escrowed offer; on a failed transfer the
-    ///      escrow is converted to a DLRS claim (moved to hub reserves + DLRS minted) to avoid bricking.
+    /// @dev Exit path: not blocked by pause. Returns the escrowed offer. If the transfer fails, a
+    ///      queued position is parked and a parked one reverts. Body in SwapRouteLib.
     function cancelQueue(uint256 positionId) external override nonReentrant {
         QueueStorage.QueuePosition storage p = QueueStorage.layout().positions[positionId];
         if (p.owner == address(0)) revert QueuePositionNotFound(positionId);
@@ -767,6 +767,11 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
+    function isQueuePositionParked(uint256 positionId) external view override returns (bool) {
+        return QueueStorage.layout().positions[positionId].parked;
+    }
+
+    /// @inheritdoc IDollarStore
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view override returns (uint256) {
         uint256 count = QueueStorage.layout().queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount;
         return QueueLib.minimumOrderSize(count);
@@ -808,7 +813,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (received < nativeAmount) revert FeeOnTransferNotSupported(asset);
     }
 
-    // The directed-swap fill / FIFO settle / enqueue / escrow-refund / cancel machinery lives in
+    // The directed-swap fill / FIFO settle / enqueue / park / cancel machinery lives in
     // SwapRouteLib (linked, delegatecall over the same ERC-7201 storage). swap / swapExactInput /
     // processQueue / cancelQueue / _triggerSpokeQueues delegate into it. Kept out of this
     // implementation to fit under the EIP-170 24576-byte runtime limit (accepted delegatecall cost on
@@ -882,7 +887,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    /// @dev Sweeps only the excess above accounted (reserves + escrow); full balance for unlisted assets.
+    /// @dev Sweeps only the excess above accounted: queue escrow always, plus reserves while listed.
     function rescueTokens(address asset, address to) external override onlyGovernor {
         // Cold path: delegated to SpokeAdminLib to keep DollarStore under the EIP-170 runtime size limit.
         SpokeAdminLib.rescueTokens(asset, to);

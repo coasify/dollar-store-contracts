@@ -96,11 +96,10 @@ library SpokeAdminLib {
         RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
 
         uint256 actual = IERC20(asset).balanceOf(address(this));
-        uint256 accounted = 0;
-        if (cfg.listed) {
-            uint256 escrowUnits = QueueStorage.layout().totalEscrowedByAsset[asset];
-            accounted = (r.reserves[cfg.poolId][asset] + escrowUnits) * cfg.scalingFactor;
-        }
+        // Escrow is owed whether or not the asset is still listed (a removed spoke can leave parked
+        // escrow behind); reserves exist only while it is listed.
+        uint256 accounted = QueueStorage.layout().totalEscrowedByAsset[asset] * cfg.scalingFactor;
+        if (cfg.listed) accounted += r.reserves[cfg.poolId][asset] * cfg.scalingFactor;
         if (actual <= accounted) revert IDollarStore.NoExcessTokens(asset);
 
         uint256 excess = actual - accounted;

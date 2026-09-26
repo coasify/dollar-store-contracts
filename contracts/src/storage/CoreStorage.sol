@@ -14,7 +14,7 @@ library CoreStorage {
         ///         Does NOT hold upgrade authority (that is the upgrader, since M8).
         ///         Expected to be a TimelockController (short delay) in production.
         address governor;
-        /// @notice The guardian address: emergency authority (pause/unpause, cancel, tighten caps).
+        /// @notice The guardian address: emergency authority (pause/unpause, tighten caps).
         ///         Expected to be a multi-sig in production (fast, no timelock).
         address guardian;
         /// @notice Pending governor for the two-step governor transfer.
