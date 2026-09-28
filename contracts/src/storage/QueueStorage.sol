@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 /// @title QueueStorage - ERC-7201 namespaced storage for the directed FIFO queue module
 /// @notice Holds the directed-queue bookkeeping (positions, linked lists, escrow totals).

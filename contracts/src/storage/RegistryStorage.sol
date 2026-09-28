@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 /// @title RegistryStorage - ERC-7201 namespaced storage for the asset registry, pools and reserves
 /// @notice Single source of truth for "what assets/pools exist and how much each pool holds".

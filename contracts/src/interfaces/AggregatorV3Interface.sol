@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 /// @title AggregatorV3Interface - Minimal Chainlink price feed interface used by the peg check.
 interface AggregatorV3Interface {
