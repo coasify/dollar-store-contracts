@@ -71,7 +71,9 @@ library RegistryStorage {
 
     /// @custom:storage-location erc7201:dollarstore.storage.registry
     struct Layout {
-        /// @notice Asset address => its configuration.
+        /// @notice Asset address => its configuration. An asset is LISTED in at most one pool at a time:
+        ///         relisting requires the previous pool to be killed. Queue keys are pool-scoped (see
+        ///         QueueStorage.queueKey), so a killed pool's lines are never inherited by its successor.
         mapping(address => AssetConfig) assetConfig;
         /// @notice All pools. Index 0 is always the hub.
         Pool[] pools;

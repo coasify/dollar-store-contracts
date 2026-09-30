@@ -8,8 +8,8 @@ import {QueueStorage} from "../src/storage/QueueStorage.sol";
 /// @dev QueueStorage is reserved scaffolding for M4 (no live logic yet); these tests pin the
 ///      directed-key convention, the constants, the ERC-7201 slot, and a storage round-trip.
 contract QueueStorageHarness {
-    function key(address o, address w) external pure returns (bytes32) {
-        return QueueStorage.queueKey(o, w);
+    function key(address o, address w, uint16 poolId) external pure returns (bytes32) {
+        return QueueStorage.queueKey(o, w, poolId);
     }
 
     function setNextId(uint256 v) external {
@@ -24,6 +24,7 @@ contract QueueStorageHarness {
         QueueStorage.layout().positions[id] = QueueStorage.QueuePosition({
             owner: owner,
             parked: false,
+            poolId: 0,
             offerAsset: offerAsset,
             wantAsset: wantAsset,
             offerAmount: amount,
@@ -75,13 +76,15 @@ contract QueueStorageTest is Test {
         h = new QueueStorageHarness();
     }
 
-    /// @notice The queue key is DIRECTED: (offer->want) and (want->offer) are different queues.
-    function test_queueKey_isDirectional() public {
-        bytes32 ab = h.key(USDC, USDT);
-        bytes32 ba = h.key(USDT, USDC);
+    /// @notice The queue key is DIRECTED and POOL-SCOPED: (offer->want) and (want->offer) are different
+    ///         queues, and the same pair in a different pool is a different queue again.
+    function test_queueKey_isDirectionalAndPoolScoped() public {
+        bytes32 ab = h.key(USDC, USDT, 0);
+        bytes32 ba = h.key(USDT, USDC, 0);
         assertTrue(ab != ba, "directed: key(A,B) != key(B,A)");
-        assertEq(ab, h.key(USDC, USDT), "deterministic");
-        assertEq(ab, keccak256(abi.encode(USDC, USDT)), "matches keccak(offer,want)");
+        assertEq(ab, h.key(USDC, USDT, 0), "deterministic");
+        assertEq(ab, keccak256(abi.encode(USDC, USDT, uint16(0))), "matches keccak(offer,want,poolId)");
+        assertTrue(ab != h.key(USDC, USDT, 1), "pool-scoped: same pair, different pool, different queue");
     }
 
     /// @notice Guards the hardcoded slot against transcription errors.
@@ -107,7 +110,7 @@ contract QueueStorageTest is Test {
         assertEq(h.readOffer(1), 1_000e6, "offerAmount");
         assertEq(h.readTip(1), 0, "tip reserved = 0");
 
-        bytes32 k = h.key(USDC, USDT);
+        bytes32 k = h.key(USDC, USDT, 0);
         h.bumpQueue(k, 500e6);
         assertEq(h.queueDepth(k), 500e6, "queue depth");
 

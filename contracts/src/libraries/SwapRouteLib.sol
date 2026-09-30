@@ -56,7 +56,12 @@ library SwapRouteLib {
         uint256 amountQueued
     );
     event QueueJoined(
-        uint256 indexed positionId, address indexed owner, address offerAsset, address wantAsset, uint256 amount
+        uint256 indexed positionId,
+        address indexed owner,
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
+        uint16 poolId
     );
     event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
     event QueueCancelled(uint256 indexed positionId, address indexed owner, uint256 amountReturned);
@@ -96,7 +101,7 @@ library SwapRouteLib {
         }
 
         if (remaining > 0) {
-            enqueueRemainder(offerAsset, wantAsset, remaining);
+            enqueueRemainder(offerAsset, wantAsset, route.spokePoolId, remaining);
             amountQueued = remaining;
         }
 
@@ -337,7 +342,7 @@ library SwapRouteLib {
 
         // Step 1: exact-opposite queue (wantAsset -> offerAsset). Peer-to-peer escrow match; touches no
         // protocol reserves and no dlrsReserve, so it is route-independent.
-        uint256 current = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset)].head;
+        uint256 current = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset, route.spokePoolId)].head;
         while (current != 0 && remaining > 0) {
             QueueStorage.QueuePosition storage p = qs.positions[current];
             uint256 next = p.next;
@@ -369,7 +374,7 @@ library SwapRouteLib {
         // the queue is now fully cleared.
         if (allowReserves && remaining > 0) {
             settleSameDirection(route, offerAsset, wantAsset, MAX_INLINE_SETTLE);
-            if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount == 0) {
+            if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, route.spokePoolId)].positionCount == 0) {
                 uint256 available = wantReserveAvailable(route, wantAsset);
                 uint256 fill = available <= remaining ? available : remaining;
                 if (fill > 0) {
@@ -390,7 +395,7 @@ library SwapRouteLib {
     {
         QueueStorage.Layout storage qs = QueueStorage.layout();
 
-        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;
+        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, route.spokePoolId)].head;
 
         while (current != 0 && positionsProcessed < maxPositions) {
             QueueStorage.QueuePosition storage p = qs.positions[current];
@@ -425,16 +430,16 @@ library SwapRouteLib {
 
     /// @dev Escrow the remainder into the (offerAsset -> wantAsset) queue. Enforces cap and the
     ///      minimum order size, with the below-minimum exception only for the first position.
-    function enqueueRemainder(address offerAsset, address wantAsset, uint256 remaining) internal {
+    function enqueueRemainder(address offerAsset, address wantAsset, uint16 poolId, uint256 remaining) internal {
         QueueStorage.Layout storage qs = QueueStorage.layout();
-        QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)];
+        QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, poolId)];
         if (q.positionCount >= QueueStorage.MAX_QUEUE_POSITIONS) revert IDollarStore.QueueFull(offerAsset, wantAsset);
 
         uint256 minOrder = QueueLib.minimumOrderSize(q.positionCount);
         // Below-minimum allowed only when opening the first position of an empty directed queue.
         if (remaining < minOrder && q.positionCount != 0) revert IDollarStore.OrderTooSmall(remaining, minOrder);
 
-        uint256 positionId = QueueLib.enqueue(qs, offerAsset, wantAsset, msg.sender, remaining);
-        emit QueueJoined(positionId, msg.sender, offerAsset, wantAsset, remaining);
+        uint256 positionId = QueueLib.enqueue(qs, offerAsset, wantAsset, poolId, msg.sender, remaining);
+        emit QueueJoined(positionId, msg.sender, offerAsset, wantAsset, remaining, poolId);
     }
 }

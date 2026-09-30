@@ -29,15 +29,17 @@ library QueueLib {
         QueueStorage.Layout storage qs,
         address offerAsset,
         address wantAsset,
+        uint16 poolId,
         address owner,
         uint256 amount
     ) internal returns (uint256 positionId) {
-        bytes32 key = QueueStorage.queueKey(offerAsset, wantAsset);
+        bytes32 key = QueueStorage.queueKey(offerAsset, wantAsset, poolId);
         QueueStorage.Queue storage q = qs.queues[key];
 
         positionId = ++qs.nextPositionId; // first id == 1 (0 means "no position")
         QueueStorage.QueuePosition storage p = qs.positions[positionId];
         p.owner = owner;
+        p.poolId = poolId;
         p.offerAsset = offerAsset;
         p.wantAsset = wantAsset;
         p.offerAmount = amount;
@@ -61,7 +63,8 @@ library QueueLib {
 
     /// @dev Key of the line a position currently sits in: its directed queue, or the parked line.
     function lineKey(QueueStorage.QueuePosition storage p) internal view returns (bytes32) {
-        return p.parked ? QueueStorage.parkedKey(p.offerAsset) : QueueStorage.queueKey(p.offerAsset, p.wantAsset);
+        return
+            p.parked ? QueueStorage.parkedKey(p.offerAsset) : QueueStorage.queueKey(p.offerAsset, p.wantAsset, p.poolId);
     }
 
     /// @notice Park a queued position: unlink it from its directed queue and append it to the parked
@@ -73,7 +76,7 @@ library QueueLib {
         if (p.parked) return;
         uint256 amount = p.offerAmount;
 
-        QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(p.offerAsset, p.wantAsset)];
+        QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(p.offerAsset, p.wantAsset, p.poolId)];
         _unlink(qs, p, q);
         q.positionCount -= 1;
         q.totalDepth -= amount;

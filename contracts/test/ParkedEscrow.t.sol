@@ -141,7 +141,7 @@ contract ParkedEscrowTest is Test {
 
         // The position itself is untouched: still hers, same asset and amount, original want asset kept.
         assertEq(store.getUserQueuePositions(alice).length, 1, "still listed under alice");
-        (address owner, address offer, address want, uint256 amt,) = store.getQueuePosition(aliceId);
+        (address owner, address offer, address want, uint256 amt,,) = store.getQueuePosition(aliceId);
         assertEq(owner, alice);
         assertEq(offer, address(pyusd));
         assertEq(want, address(usdc), "original want kept for the UI");
@@ -281,8 +281,8 @@ contract ParkedEscrowTest is Test {
         vm.prank(guardian);
         uint256 removed = store.haircutEscrow(address(pyusd), 10);
         assertEq(removed, 300e6);
-        (,,, uint256 a,) = store.getQueuePosition(aliceId);
-        (,,, uint256 b,) = store.getQueuePosition(bobId);
+        (,,, uint256 a,,) = store.getQueuePosition(aliceId);
+        (,,, uint256 b,,) = store.getQueuePosition(bobId);
         assertEq(a, 50e6);
         assertEq(b, 250e6);
 
@@ -334,8 +334,8 @@ contract ParkedEscrowTest is Test {
         uint256 removed = store.haircutEscrow(address(pyusd), 2); // budget of exactly 2
         assertEq(removed, 300e6);
         assertEq(store.getQueueDepth(address(pyusd), address(0)), 300e6, "parked depth written down too");
-        (,,, uint256 a,) = store.getQueuePosition(id);
-        (,,, uint256 b,) = store.getQueuePosition(id2);
+        (,,, uint256 a,,) = store.getQueuePosition(id);
+        (,,, uint256 b,,) = store.getQueuePosition(id2);
         assertEq(a, 50e6);
         assertEq(b, 250e6);
     }

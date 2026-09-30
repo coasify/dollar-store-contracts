@@ -13,7 +13,7 @@ pragma solidity 0.8.24;
 ///  v3: queue keyed by a DIRECTED PAIR (offerAsset -> wantAsset); a position escrows the
 ///      user's actual *offerAsset* (NOT DLRS). DLRS is never a public queue offer asset.
 ///        struct QueuePosition { owner, offerAsset, wantAsset, offerAmount, tip, ... }
-///        mapping(bytes32 => Queue) queues;             // key = keccak256(offerAsset, wantAsset)
+///        mapping(bytes32 => Queue) queues;             // key = keccak256(offerAsset, wantAsset, poolId)
 ///      Plus `totalEscrowedByAsset` for the 3-bucket solvency accounting, and a reserved
 ///      `tip` field for the deferred priority feature (U1).
 /// -----------------------------------------------------------------------------------------
@@ -53,6 +53,10 @@ library QueueStorage {
         ///         to the owner failed. Escrow is untouched and leaves only as the offered asset, via
         ///         cancelQueue, once the transfer succeeds. Packs into `owner`'s slot.
         bool parked;
+        /// @notice Pool the position was queued in: the spoke pool for a hub<->spoke pair, 0 for
+        ///         hub-to-hub. Part of the queue key while queued, so a killed-and-relisted spoke never
+        ///         shares lines with its predecessor. Kept when parked. Packs into `owner`'s slot.
+        uint16 poolId;
         /// @notice Asset the user is offering (escrowed by the protocol).
         address offerAsset;
         /// @notice Asset the user wants to receive.
@@ -76,7 +80,7 @@ library QueueStorage {
     struct Layout {
         /// @notice Monotonic id generator. Starts at 1 so 0 can mean "no position".
         uint256 nextPositionId;
-        /// @notice Directed queue state, keyed by queueKey(offerAsset, wantAsset).
+        /// @notice Directed queue state, keyed by queueKey(offerAsset, wantAsset, poolId).
         mapping(bytes32 => Queue) queues;
         /// @notice Position data, keyed by position id.
         mapping(uint256 => QueuePosition) positions;
@@ -99,19 +103,22 @@ library QueueStorage {
         }
     }
 
-    /// @notice Canonical key for a directed queue.
+    /// @notice Canonical key for a directed queue. Scoped to the pool the route touches so each spoke
+    ///         generation owns its own lines: a relisted asset starts with empty queues, and a killed
+    ///         pool's leftover positions can never be reached through a replacement pool.
     /// @param offerAsset The asset the user offers (escrowed).
     /// @param wantAsset The asset the user wants.
+    /// @param poolId The spoke pool for a hub<->spoke pair, 0 for hub-to-hub.
     /// @return The keccak256 key used to index `queues`.
-    function queueKey(address offerAsset, address wantAsset) internal pure returns (bytes32) {
-        return keccak256(abi.encode(offerAsset, wantAsset));
+    function queueKey(address offerAsset, address wantAsset, uint16 poolId) internal pure returns (bytes32) {
+        return keccak256(abi.encode(offerAsset, wantAsset, poolId));
     }
 
     /// @notice Key of the parked line for `offerAsset`: positions whose transfer to the owner failed.
-    ///         Their escrow is not fillable. Same formula as a directed queue with `wantAsset == 0`,
+    ///         Their escrow is not fillable. Same formula as a directed queue with `wantAsset == 0` in pool 0,
     ///         which no route can target, so the line is reached only by its owner's cancel
     ///         and by haircutEscrow.
     function parkedKey(address offerAsset) internal pure returns (bytes32) {
-        return queueKey(offerAsset, address(0));
+        return queueKey(offerAsset, address(0), 0);
     }
 }

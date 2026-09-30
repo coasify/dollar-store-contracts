@@ -10,18 +10,26 @@ import {MockERC20} from "../mocks/MockERC20.sol";
 /// @notice Invariant handler: bounded, randomized hub + spoke actions against DollarStore. Reverts are
 ///         swallowed (fail_on_revert = false) so the fuzzer explores freely while the invariant
 ///         assertions run between calls. Hub assets are 6dp; the spoke asset (rlusd) is 18dp.
-/// @dev Does NOT call impairment paths (syncReserves / haircut / deal) or lifecycle transitions - those
-///      intentionally break backing conservation and are covered by unit tests.
+/// @dev Does NOT call impairment paths (syncReserves / haircut / deal) - those intentionally break
+///      backing conservation and are covered by unit tests. The spoke lifecycle IS exercised: the spoke
+///      can be wound down, retired, and its asset listed again as a new spoke, so positions of several
+///      pool generations coexist.
 contract Handler is Test {
     DollarStore internal store;
     DLRS internal dlrs;
     MockERC20 internal usdc;
     MockERC20 internal usdt;
     MockERC20 internal rlusd;
-    uint16 internal spokeId;
+    address internal feed;
+    address internal governor;
+    uint16 internal spokeId; // the live spoke, or the last one if the asset is currently unlisted
+    uint16[] internal spokeIds; // every spoke generation created so far
 
     address[] internal actors;
-    uint256[] internal positionIds; // best-effort tracking of created queue positions
+    uint256[] internal positionIds; // every queue position the handler created (one per queued swap)
+
+    uint256 public removals; // successful removePool calls
+    uint256 public relists; // successful createSpoke calls after a removal
 
     uint256 internal constant MAX_AMOUNT = 1_000_000e6; // hub assets (6dp)
     uint256 internal constant MAX_AMOUNT_18 = 1_000_000e18; // spoke asset (18dp)
@@ -33,6 +41,8 @@ contract Handler is Test {
         MockERC20 _usdt,
         MockERC20 _rlusd,
         uint16 _spokeId,
+        address _feed,
+        address _governor,
         address[] memory _actors
     ) {
         store = _store;
@@ -41,7 +51,22 @@ contract Handler is Test {
         usdt = _usdt;
         rlusd = _rlusd;
         spokeId = _spokeId;
+        spokeIds.push(_spokeId);
+        feed = _feed;
+        governor = _governor;
         actors = _actors;
+    }
+
+    function allSpokeIds() external view returns (uint16[] memory) {
+        return spokeIds;
+    }
+
+    function allPositionIds() external view returns (uint256[] memory) {
+        return positionIds;
+    }
+
+    function allActors() external view returns (address[] memory) {
+        return actors;
     }
 
     function _actor(uint256 seed) internal view returns (address) {
@@ -166,12 +191,46 @@ contract Handler is Test {
         vm.stopPrank();
     }
 
+    // ============ Spoke lifecycle ============
+
+    function windDown() external {
+        vm.prank(governor);
+        try store.windDownSpoke(spokeId) {} catch {}
+    }
+
+    /// @dev Every LP redeems in full, then governance removes the pool. Any step may fail; removal
+    ///      succeeds only when the spoke is fully drained, and dust from rounding can keep it alive.
+    function retireSpoke() external {
+        for (uint256 i; i < actors.length; ++i) {
+            uint256 shares = store.getReceiptShares(spokeId, actors[i]);
+            if (shares == 0) continue;
+            vm.prank(actors[i]);
+            try store.redeemSpoke(spokeId, shares, type(uint256).max) {} catch {}
+        }
+        vm.prank(governor);
+        try store.removePool(spokeId) {
+            removals += 1;
+        } catch {}
+    }
+
+    /// @dev Lists the spoke asset again once its previous pool is gone; the new pool becomes the target
+    ///      of every spoke action from here on.
+    function relistSpoke() external {
+        if (store.isAssetListed(address(rlusd))) return;
+        vm.prank(governor);
+        try store.createSpoke(address(rlusd), feed, 0) returns (uint16 id) {
+            spokeId = id;
+            spokeIds.push(id);
+            relists += 1;
+        } catch {}
+    }
+
     // ============ Shared: cancel + process ============
 
     function cancel(uint256 posSeed) external {
         if (positionIds.length == 0) return;
         uint256 id = positionIds[posSeed % positionIds.length];
-        (address owner,,,,) = store.getQueuePosition(id);
+        (address owner,,,,,) = store.getQueuePosition(id);
         if (owner == address(0)) return; // already filled/cancelled
         vm.startPrank(owner);
         try store.cancelQueue(id) {} catch {}
@@ -182,11 +241,13 @@ contract Handler is Test {
         maxPositions = bound(maxPositions, 0, 50);
         address offer;
         address want;
-        uint256 r = routeSeed % 4;
+        uint256 r = routeSeed % 6;
         if (r == 0) (offer, want) = (address(usdc), address(usdt));
         else if (r == 1) (offer, want) = (address(usdt), address(usdc));
         else if (r == 2) (offer, want) = (address(rlusd), address(usdc));
-        else (offer, want) = (address(usdc), address(rlusd));
+        else if (r == 3) (offer, want) = (address(usdc), address(rlusd));
+        else if (r == 4) (offer, want) = (address(rlusd), address(usdt));
+        else (offer, want) = (address(usdt), address(rlusd));
         try store.processQueue(offer, want, maxPositions) {} catch {}
     }
 }

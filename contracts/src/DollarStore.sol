@@ -297,10 +297,12 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated. A spoke can only be removed once fully drained: no spoke reserves, no
-    ///      dlrsReserve and no queued depth on any route touching the spoke asset. Kills
-    ///      the pool by pausing it and unlisting its assets; the poolId is retired but the pool stays as
-    ///      a tombstone in the array so later poolIds never shift. Body lives in SpokeLifecycleLib to
-    ///      keep this implementation under the EIP-170 runtime size limit (delegatecall, same storage).
+    ///      dlrsReserve. Outstanding LP shares and queued positions do NOT block removal: worthless
+    ///      shares stay recorded under the retired poolId, and queue keys are pool-scoped, so a
+    ///      tombstone's lines are unreachable from a replacement pool and stay cancellable by their
+    ///      owners. Kills the pool by pausing it and unlisting its assets; the poolId is retired but the
+    ///      pool stays as a tombstone in the array so later poolIds never shift. Body lives in
+    ///      SpokeLifecycleLib to keep this implementation under the EIP-170 limit.
     function removePool(uint16 poolId) external override onlyGovernor {
         SpokeLifecycleLib.removePool(poolId);
     }
@@ -747,7 +749,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function getQueueDepth(address offerAsset, address wantAsset) external view override returns (uint256) {
-        return QueueStorage.layout().queues[QueueStorage.queueKey(offerAsset, wantAsset)].totalDepth;
+        (, uint256 depth) = _routeLine(offerAsset, wantAsset);
+        return depth;
     }
 
     /// @inheritdoc IDollarStore
@@ -755,10 +758,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         external
         view
         override
-        returns (address, address, address, uint256, uint256)
+        returns (address, address, address, uint256, uint256, uint16)
     {
         QueueStorage.QueuePosition storage p = QueueStorage.layout().positions[positionId];
-        return (p.owner, p.offerAsset, p.wantAsset, p.offerAmount, p.timestamp);
+        return (p.owner, p.offerAsset, p.wantAsset, p.offerAmount, p.timestamp, p.poolId);
     }
 
     /// @inheritdoc IDollarStore
@@ -773,7 +776,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view override returns (uint256) {
-        uint256 count = QueueStorage.layout().queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount;
+        (uint256 count,) = _routeLine(offerAsset, wantAsset);
         return QueueLib.minimumOrderSize(count);
     }
 
@@ -789,7 +792,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
         QueueStorage.Layout storage qs = QueueStorage.layout();
         // FIFO availability: a non-empty same-direction queue owns all instant liquidity.
-        if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount != 0) {
+        if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, route.spokePoolId)].positionCount != 0) {
             return 0;
         }
 
@@ -797,10 +800,33 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (units == 0) return 0;
 
         // Instant liquidity = opposite-queue escrow (peer matches) + route-aware protocol reserves.
-        uint256 avail = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset)].totalDepth
+        uint256 avail = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset, route.spokePoolId)].totalDepth
             + SwapRouteLib.wantReserveAvailable(route, wantAsset);
         uint256 fillable = units <= avail ? units : avail;
         return NormalizationLib.toNative(fillable, route.wantScaling);
+    }
+
+    /// @dev The line a directed pair currently uses, for the pair-based views. `wantAsset == 0` is the
+    ///      parked line of `offerAsset`, listed or not. Otherwise both assets must be listed, else the
+    ///      pair routes nowhere and an empty line is returned, so a removed pool's lines are never
+    ///      reported. The pool is the spoke's for a hub<->spoke pair and 0 for hub-to-hub, as in
+    ///      SwapRouteLib.classifyRoute.
+    function _routeLine(address offerAsset, address wantAsset)
+        internal
+        view
+        returns (uint256 positionCount, uint256 totalDepth)
+    {
+        bytes32 key;
+        if (wantAsset == address(0)) {
+            key = QueueStorage.parkedKey(offerAsset);
+        } else {
+            RegistryStorage.AssetConfig storage o = RegistryStorage.layout().assetConfig[offerAsset];
+            RegistryStorage.AssetConfig storage w = RegistryStorage.layout().assetConfig[wantAsset];
+            if (!o.listed || !w.listed) return (0, 0);
+            key = QueueStorage.queueKey(offerAsset, wantAsset, o.poolId != 0 ? o.poolId : w.poolId);
+        }
+        QueueStorage.Queue storage q = QueueStorage.layout().queues[key];
+        return (q.positionCount, q.totalDepth);
     }
 
     // ============ Internal: token pull (shared by deposit) ============
