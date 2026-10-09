@@ -25,6 +25,7 @@ contract QueueStorageHarness {
             owner: owner,
             parked: false,
             poolId: 0,
+            userIndex: 0,
             offerAsset: offerAsset,
             wantAsset: wantAsset,
             offerAmount: amount,

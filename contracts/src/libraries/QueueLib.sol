@@ -40,6 +40,7 @@ library QueueLib {
         QueueStorage.QueuePosition storage p = qs.positions[positionId];
         p.owner = owner;
         p.poolId = poolId;
+        p.userIndex = uint64(qs.userPositions[owner].length);
         p.offerAsset = offerAsset;
         p.wantAsset = wantAsset;
         p.offerAmount = amount;
@@ -124,7 +125,7 @@ library QueueLib {
         q.totalDepth -= amount;
         qs.totalEscrowedByAsset[offerAsset] -= amount;
 
-        _removeUserPosition(qs, owner, positionId);
+        _removeUserPosition(qs, owner, p.userIndex);
         delete qs.positions[positionId];
     }
 
@@ -144,16 +145,16 @@ library QueueLib {
         }
     }
 
-    /// @dev Swap-and-pop a position id out of the owner's position array.
-    function _removeUserPosition(QueueStorage.Layout storage qs, address owner, uint256 positionId) private {
+    /// @dev Swap-and-pop the id at `index` out of the owner's position array. The id moved into its
+    ///      place gets that index, so no removal searches the array.
+    function _removeUserPosition(QueueStorage.Layout storage qs, address owner, uint256 index) private {
         uint256[] storage arr = qs.userPositions[owner];
-        uint256 len = arr.length;
-        for (uint256 i = 0; i < len; i++) {
-            if (arr[i] == positionId) {
-                arr[i] = arr[len - 1];
-                arr.pop();
-                break;
-            }
+        uint256 last = arr.length - 1;
+        if (index != last) {
+            uint256 moved = arr[last];
+            arr[index] = moved;
+            qs.positions[moved].userIndex = uint64(index);
         }
+        arr.pop();
     }
 }

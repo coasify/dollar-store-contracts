@@ -228,6 +228,84 @@ contract ParkedEscrowTest is Test {
         assertEq(store.getUserQueuePositions(alice).length, 0);
     }
 
+    // ============ An owner's parked positions cost nobody else anything ============
+
+    /// @dev Alice, blocked on USDC, queues one unit of PYUSD -> USDC; Bob's opposite swap fails to pay
+    ///      her, which parks it. Bob's own remainder queues and he cancels it, leaving both lines empty.
+    function _parkOneUnit() internal {
+        vm.prank(alice);
+        store.swap(address(pyusd), address(usdc), 1, 0, 0, block.timestamp);
+        vm.prank(bob);
+        store.swap(address(usdc), address(pyusd), 1, 0, 0, block.timestamp);
+        uint256 bobId = store.getUserQueuePositions(bob)[0];
+        vm.prank(bob);
+        store.cancelQueue(bobId);
+    }
+
+    /// @dev Gas of the deposit that pays Alice's USDS -> PYUSD position in full, with `parked` positions
+    ///      of hers on the parked line. Storage is cooled first so every slot read is priced as on chain.
+    function _fillGasWithParked(uint256 parked) internal returns (uint256 gasUsed) {
+        for (uint256 i; i < parked; i++) {
+            _parkOneUnit();
+        }
+        vm.prank(alice);
+        store.swap(address(usds), address(pyusd), 100e18, 0, 0, block.timestamp);
+        assertEq(store.getUserQueuePositions(alice).length, parked + 1);
+
+        uint256 pyBefore = pyusd.balanceOf(alice);
+        vm.cool(address(store));
+        vm.prank(dana);
+        uint256 g = gasleft();
+        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        gasUsed = g - gasleft();
+
+        assertEq(pyusd.balanceOf(alice) - pyBefore, 100e6, "alice paid in full");
+        assertEq(store.getUserQueuePositions(alice).length, parked, "only the parked positions remain");
+    }
+
+    /// @notice Paying a position in full costs the same however many parked positions its owner holds.
+    function test_fill_costDoesNotGrowWithOwnersParkedPositions() public {
+        usdc.setBlocked(alice, true);
+        uint256 snap = vm.snapshotState();
+        uint256 one = _fillGasWithParked(1);
+        vm.revertToState(snap);
+        uint256 many = _fillGasWithParked(40);
+        assertApproxEqAbs(many, one, 5_000, "no per-parked-position cost");
+    }
+
+    /// @notice Removing positions in any order keeps the owner's list exact: a parked one from the front,
+    ///         then the queued one that took its place by a fill, then the last parked one.
+    function test_remove_keepsOwnersListExact_parkedAndQueuedInAnyOrder() public {
+        usdc.setBlocked(alice, true);
+        _parkOneUnit();
+        _parkOneUnit();
+        vm.prank(alice);
+        store.swap(address(usds), address(pyusd), 100e18, 0, 0, block.timestamp);
+        uint256[] memory ids = store.getUserQueuePositions(alice);
+        assertEq(ids.length, 3);
+        (uint256 parkedA, uint256 parkedB, uint256 queued) = (ids[0], ids[1], ids[2]);
+
+        // Cancel the first parked position: the queued one takes its place at the front.
+        vm.prank(alice);
+        store.cancelQueue(parkedA);
+        ids = store.getUserQueuePositions(alice);
+        assertEq(ids.length, 2);
+        assertEq(ids[0], queued);
+        assertEq(ids[1], parkedB);
+
+        // A deposit pays the queued position in full: the remaining parked one moves to the front.
+        vm.prank(dana);
+        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        ids = store.getUserQueuePositions(alice);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], parkedB);
+
+        vm.prank(alice);
+        store.cancelQueue(parkedB);
+        assertEq(store.getUserQueuePositions(alice).length, 0);
+        assertEq(store.getQueueDepth(address(pyusd), address(0)), 0, "parked line empty");
+    }
+
     // ============ The issuer of the asset being paid decides; the escrowed asset's issuer is not asked ============
 
     /// @notice A queued owner blocked on the asset they escrowed, but not on the asset they will receive,

@@ -57,6 +57,9 @@ library QueueStorage {
         ///         hub-to-hub. Part of the queue key while queued, so a killed-and-relisted spoke never
         ///         shares lines with its predecessor. Kept when parked. Packs into `owner`'s slot.
         uint16 poolId;
+        /// @notice Index of this position's id in `userPositions[owner]`, so removal needs no search.
+        ///         Packs into `owner`'s slot.
+        uint64 userIndex;
         /// @notice Asset the user is offering (escrowed by the protocol).
         address offerAsset;
         /// @notice Asset the user wants to receive.
