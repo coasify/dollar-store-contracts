@@ -780,7 +780,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view override returns (uint256) {
-        (uint256 count,) = _routeLine(offerAsset, wantAsset);
+        // The parked line takes no orders, so its length sets no minimum.
+        uint256 count;
+        if (wantAsset != address(0)) (count,) = _routeLine(offerAsset, wantAsset);
         return QueueLib.minimumOrderSize(count);
     }
 

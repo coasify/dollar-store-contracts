@@ -388,7 +388,8 @@ interface IDollarStore {
     ///         total parked escrow of `asset`.
     function isQueuePositionParked(uint256 positionId) external view returns (bool);
     /// @notice Current minimum order size to queue into the (offerAsset -> wantAsset) queue, in the pool
-    ///         the pair currently routes through. The base minimum if either asset is not listed.
+    ///         the pair currently routes through. The base minimum if either asset is not listed,
+    ///         which includes `wantAsset == address(0)`, the parked line.
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view returns (uint256);
     /// @notice Instantly fillable amount for a swap (normalized 6dp), respecting FIFO availability
     ///         (returns 0 for a same-direction pair that already has a non-empty queue).
