@@ -270,6 +270,77 @@ contract PoolScopedQueuesTest is Test {
         assertFalse(store.isQueuePositionParked(id), "still queued, not parked");
     }
 
+    // ============ An asset is not listed again while its leftover escrow is short ============
+
+    /// @dev Alice queues 500 RLUSD on the spoke, the spoke is removed with her position still queued,
+    ///      and the contract then loses half its RLUSD.
+    function _removeWithShortEscrow() internal returns (uint256 id) {
+        vm.prank(alice);
+        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp);
+        id = store.getUserQueuePositions(alice)[0];
+        vm.prank(governor);
+        store.removePool(spoke);
+        rlusd.burn(address(store), 250e18);
+    }
+
+    /// @dev A new LP funds the relisted spoke with 1,000 RLUSD, Alice cancels her old position, and the
+    ///      LP then takes the whole deposit back: the old position was never paid from it.
+    function _newLpIsWholeAfterOldCancel(uint16 spoke2, uint256 id, uint256 aliceGets) internal {
+        vm.prank(lp);
+        uint256 shares = store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+        uint256 a = rlusd.balanceOf(alice);
+        vm.prank(alice);
+        store.cancelQueue(id);
+        assertEq(rlusd.balanceOf(alice) - a, aliceGets, "old position paid what it is owed");
+        uint256 l = rlusd.balanceOf(lp);
+        vm.prank(lp);
+        store.redeemSpoke(spoke2, shares, block.timestamp);
+        assertEq(rlusd.balanceOf(lp) - l, 1_000e18, "new LP takes the whole deposit back");
+    }
+
+    function test_relist_refusedWhileLeftoverEscrowIsShort() public {
+        _removeWithShortEscrow();
+        vm.startPrank(governor);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
+        store.createSpoke(address(rlusd), address(feed), 0);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
+        store.addHubAsset(address(rlusd), address(feed));
+        vm.stopPrank();
+    }
+
+    function test_relist_afterHaircut_newLpIsNotExposed() public {
+        uint256 id = _removeWithShortEscrow();
+        vm.prank(guardian);
+        store.haircutEscrow(address(rlusd), 1);
+        vm.prank(governor);
+        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        _newLpIsWholeAfterOldCancel(spoke2, id, 250e18);
+    }
+
+    function test_relist_afterBalanceRestored_everyonePaidInFull() public {
+        uint256 id = _removeWithShortEscrow();
+        // One base unit short is still refused.
+        rlusd.mint(address(store), 250e18 - 1);
+        vm.prank(governor);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
+        store.createSpoke(address(rlusd), address(feed), 0);
+
+        rlusd.mint(address(store), 1);
+        vm.prank(governor);
+        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        _newLpIsWholeAfterOldCancel(spoke2, id, 500e18);
+    }
+
+    function test_relistAsHubAsset_afterHaircut_succeeds() public {
+        uint256 id = _removeWithShortEscrow();
+        vm.prank(guardian);
+        store.haircutEscrow(address(rlusd), 1);
+        vm.prank(governor);
+        store.addHubAsset(address(rlusd), address(feed));
+        assertEq(store.assetPoolId(address(rlusd)), 0);
+        assertEq(_amount(id), 250e6, "old position keeps its reduced amount");
+    }
+
     // ============ The join event carries the pool ============
 
     function test_join_emitsThePoolItJoins() public {

@@ -55,6 +55,10 @@ library SpokeAdminLib {
 
         uint8 dec = IERC20Metadata(spokeAsset).decimals();
         uint64 sf = NormalizationLib.scalingFactor(dec);
+        // Escrow left by a removed pool must be covered before the asset holds reserves again.
+        if (IERC20(spokeAsset).balanceOf(address(this)) < QueueStorage.layout().totalEscrowedByAsset[spokeAsset] * sf) {
+            revert IDollarStore.EscrowImpaired(spokeAsset);
+        }
 
         RegistryStorage.Pool storage p = r.pools.push();
         p.kind = RegistryStorage.PoolKind.Spoke;
