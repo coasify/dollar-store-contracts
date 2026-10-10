@@ -390,8 +390,8 @@ contract HubSwapQueueTest is Test {
         _deposit(bob, usdt, 1_000e6);
         assertEq(store.getSwapQuote(address(usdc), address(usdt), 500e6), 500e6, "fillable from reserves");
 
-        // With a non-empty same-direction queue, instant quote is 0 (FIFO).
+        // Carol's remainder waits and no USDT is left to settle it, so nothing fills for the next caller.
         _swap(carol, usdc, usdt, 2_000e6, 0); // partially fills 1000, queues 1000 -> same-dir queue non-empty
-        assertEq(store.getSwapQuote(address(usdc), address(usdt), 500e6), 0, "FIFO blocks instant quote");
+        assertEq(store.getSwapQuote(address(usdc), address(usdt), 500e6), 0, "line waiting, no reserves left");
     }
 }

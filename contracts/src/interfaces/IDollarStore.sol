@@ -385,8 +385,12 @@ interface IDollarStore {
     ///         the pair currently routes through. The base minimum if either asset is not listed,
     ///         which includes `wantAsset == address(0)`, the parked line.
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view returns (uint256);
-    /// @notice Instantly fillable amount for a swap (normalized 6dp), respecting FIFO availability
-    ///         (returns 0 for a same-direction pair that already has a non-empty queue).
+    /// @notice Amount of wantAsset, in its native units, that swap or swapExactInput would fill now for
+    ///         `amount` of offerAsset: the opposite queue, then reserves left after the swap first settles
+    ///         up to 8 earlier same-direction positions at the caller's gas cost. 0 when the swap would
+    ///         revert on route, pause, or offer-price checks. Assumes every token transfer succeeds: a
+    ///         queued owner who cannot be paid can make the real fill higher or lower, and a caller who
+    ///         cannot receive wantAsset makes the swap revert. Simulate the call for an exact answer.
     function getSwapQuote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256);
 
     // ============ Risk Controls (M5) ============
