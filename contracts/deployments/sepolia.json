@@ -1,0 +1,45 @@
+{
+  "chainId": 11155111,
+  "version": "0.10.0",
+  "block": 11823702,
+  "contracts": {
+    "DollarStore": "0xE99EAdbBb325aC382c2666ae65fAc300d236ff27",
+    "DollarStoreImplementation": "0xB27Ee072B60d653bB13c03dA174C677426839F43",
+    "DLRS": "0xb9394989481D2ba8FAF5E7d6BA7Ba4Fb30f2Fb60",
+    "UpgraderTimelock": "0x702a866Ec5526105B8855Db1b8499a36250F8fD0",
+    "GovernorTimelock": "0x4c33E1047524Ee34B731078368fFd4Ef53FFa49a",
+    "SpokeAdminLib": "0x936edD3CDf38afc84FD84aD0B81977d1Da423A16",
+    "SpokeLifecycleLib": "0x38F5920Cc3029346983f620Bdd9f292Ded549daa",
+    "SwapRouteLib": "0x52F4A050564dc51eB2F12eAEbF55c7645C8b5164",
+    "DollarStoreImplementationAtDeploy": "0x3A11CD3A8F866d4C801Af8B7B786bea155C520A4"
+  },
+  "roles": {
+    "upgrader": "0x702a866Ec5526105B8855Db1b8499a36250F8fD0",
+    "governor": "0x4c33E1047524Ee34B731078368fFd4Ef53FFa49a",
+    "guardian": "0xfca687014F1306466450E09A9Aa9C7f0eDA99c67"
+  },
+  "testTokens": {
+    "USDC": "0x0a9479f7aff770965b3b2D28b29E40C3F6168588",
+    "USDT": "0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05",
+    "USDS": "0xdB82d075db6c2e30353825D78C21F472C2252D25",
+    "priceFeed": "0xc09183D6C4657697B94a4056a98D09345C028341"
+  },
+  "pools": {
+    "0": {
+      "kind": "hub",
+      "assets": [
+        "USDC",
+        "USDT"
+      ],
+      "launchCap": "1000000000000"
+    },
+    "1": {
+      "kind": "spoke",
+      "assets": [
+        "USDS"
+      ],
+      "launchCap": "0",
+      "minDlrsReserve": "0"
+    }
+  }
+}

@@ -10,7 +10,9 @@ feature-named integration suites listed below rather than by a same-named unit f
 | Module | Test file(s) |
 |---|---|
 | `DollarStore.sol` (init / roles / upgrade) | `DollarStore.t.sol` |
+| `script/DeployGovernance.s.sol` | `DeployGovernance.t.sol` |
 | `DollarStore.sol` (hub deposit / withdraw) | `HubDepositWithdraw.t.sol` |
+| `DollarStore.withdraw` (exit issuer probe, in `SpokeLifecycleLib`) | `ExitIssuerProbe.t.sol`, `fork/IssuerProbeFork.t.sol` (needs `MAINNET_RPC_URL`) |
 | `DollarStore.sol` (asset registry) | `AssetRegistry.t.sol` |
 | `DollarStore.sol` (risk controls: pauses, peg, staleness) | `RiskControls.t.sol` |
 | `DollarStore.sol` (launch caps) | `LaunchCaps.t.sol` |
@@ -39,12 +41,23 @@ Large linked libraries — tested through the proxy by the integration suites:
 
 | Library | Responsibilities | Test file(s) |
 |---|---|---|
-| `libraries/SwapRouteLib.sol` | directed swap engine, FIFO fill/settle, processQueue, cancelQueue, spoke-queue trigger | `HubSwapQueue.t.sol`, `HubSwapFallback.t.sol`, `SpokeSwap.t.sol`, `SpokeQueueTrigger.t.sol`, `RiskControls.t.sol` |
-| `libraries/SpokeAdminLib.sol` | createSpoke, syncReserves, rescueTokens | `SpokeDeposit.t.sol`, `SpokeCapsAndPauses.t.sol`, `AssetRegistry.t.sol` |
-| `libraries/SpokeLifecycleLib.sol` | windDownSpoke, removePool, haircutEscrow, withdrawHub, withdrawSpoke | `SpokeLifecycle.t.sol`, `SpokeWinddownHaircut.t.sol`, `SpokeWithdraw.t.sol` |
+| `libraries/SwapRouteLib.sol` | directed swap engine, FIFO fill/settle, processQueue, cancelQueue, parking, spoke-queue trigger, getSwapQuote, swapSpokeToSpoke | `HubSwapQueue.t.sol`, `HubSwapFallback.t.sol`, `SpokeSwap.t.sol`, `SpokeQueueTrigger.t.sol`, `RiskControls.t.sol`, `ParkedEscrow.t.sol`, `PoolScopedQueues.t.sol`, `SwapQuote.t.sol`, `SpokeToSpokeSwap.t.sol` |
+| `libraries/SpokeAdminLib.sol` | createSpoke, syncReserves, rescueTokens | `SpokeDeposit.t.sol`, `SpokeCapsAndPauses.t.sol`, `SpokeLifecycle.t.sol` (createSpoke); `RiskControls.t.sol`, `HubDepositWithdraw.t.sol`, `SpokeWinddownHaircut.t.sol`, `SpokeImpairedRecovery.t.sol` (syncReserves); `RiskControls.t.sol`, `ParkedEscrow.t.sol` (rescueTokens) |
+| `libraries/SpokeLifecycleLib.sol` | windDownSpoke, removePool, haircutEscrow, withdrawHub, withdrawSpoke, exit probe | `SpokeLifecycle.t.sol`, `SpokeWinddownHaircut.t.sol`, `SpokeWithdraw.t.sol`, `SpokeImpairedRecovery.t.sol`, `PoolScopedQueues.t.sol`, `ExitIssuerProbe.t.sol` |
 
 ## Invariants
 
 `test/invariant/` (`DollarStoreInvariants.t.sol`, `Handler.sol`) drives randomized
-deposit/withdraw/swap/cancel/process/spoke sequences and asserts the DLRS-backing and solvency
-invariants across the whole system.
+deposit/withdraw/swap/cancel/process/spoke sequences and asserts five invariants across the whole
+system: DLRS backing, solvency, escrow totals, line contents and position membership. The handler also winds down, retires and relists one spoke, so
+positions from several pool generations coexist; escrow and per-line invariants are checked across them.
+A second spoke stays active so spoke-to-spoke swaps always have a partner.
+
+## Mocks and untested scripts
+
+`test/mocks/` holds the test doubles: a plain ERC-20, one that blocks chosen senders or recipients,
+one that takes a fee on transfer, one that re-enters the store on transfer, and a Chainlink-style
+price feed.
+
+`script/Upgrade.s.sol` and `script/CreateSpoke.s.sol` have no test of their own. The upgrade path is
+exercised through the proxy in `DollarStore.t.sol`, and `createSpoke` through the suites above.

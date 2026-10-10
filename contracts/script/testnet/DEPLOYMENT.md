@@ -1,11 +1,12 @@
-# Deployment - Testnet mocks (USDC / USDT)
+# Deployment - Testnet mocks (USDC / USDT / USDS)
 
 **Network:** Sepolia (chain id 11155111)
 **Date:** 2026-07-10
 **Block:** 11244130
-**Script:** `test/testnet-mocks/DeployMockStables.s.sol:DeployMockStables`
+**Script:** `script/testnet/DeployMockStables.s.sol:DeployMockStables`
 **Total gas paid:** 0.001143488375584736 ETH (1116088 gas @ avg 1.024550372 gwei)
-**Purpose:** faucet ERC20 mocks with a public `mint` to simulate USDC and USDT in the rehearsal.
+**Purpose:** faucet ERC20 mocks with a public `mint` to simulate USDC, USDT and USDS in the rehearsal.
+The header records the USDC / USDT deploy; the USDS mock was added later (see below).
 Testnet only; not part of the real `src/` protocol.
 
 ## Addresses
@@ -20,8 +21,7 @@ USDC/USDT use 6 decimals (same as the real assets on Ethereum); USDS uses 18 (sa
 
 ## USDS addition (2026-08-20)
 
-The hub topology moved to **USDC + USDS**, with **USDT** becoming the first spoke. USDC and USDT
-mocks were reused as-is; only the USDS mock was added.
+A USDS mock was added. The USDC and USDT mocks were reused as they were.
 
 **Network:** Sepolia (chain id 11155111) · **Block:** 11531508 · **Gas used:** 558752
 **Script:** `DeployMockStables` with `DEPLOY_USDS=true` (USDC/USDT flags off, so they were not redeployed).
@@ -48,23 +48,18 @@ mocks were reused as-is; only the USDS mock was added.
 
 ## Verification
 
-Both contracts **verified** on Etherscan (2026-07-10).
-
-The automatic `--verify` on the first run failed with
-`Error: cannot resolve file at ...testnet-mocks/MockStableERC20.sol` because the contract was in a
-stray folder at the root of `contracts`, outside the paths forge indexes. Once moved under
-`test/testnet-mocks/`, manual verification (without redeploying) passed:
+All three mocks are verified on Etherscan. To verify the USDC and USDT mocks again without redeploying:
 
 ```bash
 cd contracts
 set -a; source .env.sepolia; set +a
 
 forge verify-contract 0x0a9479f7aff770965b3b2D28b29E40C3F6168588 \
-  test/testnet-mocks/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
+  script/testnet/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
   --constructor-args $(cast abi-encode "constructor(string,string,uint8)" "USD Coin (Mock)" "USDC" 6)
 
 forge verify-contract 0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05 \
-  test/testnet-mocks/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
+  script/testnet/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
   --constructor-args $(cast abi-encode "constructor(string,string,uint8)" "Tether USD (Mock)" "USDT" 6)
 ```
 

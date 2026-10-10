@@ -21,6 +21,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.3
 
       - name: Check formatting
         run: forge fmt --check
@@ -46,6 +48,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.3
 
       - name: Run Slither
         uses: crytic/slither-action@v0.4.0
@@ -76,6 +80,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.3
 
       - name: Fork tests
         run: forge test --match-path "test/fork/*" -vvv

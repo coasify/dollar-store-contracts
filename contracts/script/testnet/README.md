@@ -1,16 +1,15 @@
-# testnet-mocks
+# Testnet mocks
 
-Testnet-only mocks, kept in `test/testnet-mocks/` (alongside the other mocks, outside the real
-`src/` code). They are not part of the protocol and must never be deployed to mainnet.
-
-> Note: they live under `test/` on purpose. `forge --verify` only resolves the standard-json of
-> contracts inside the paths forge indexes (`src`, `test`, `script`). A stray folder at the root of
-> `contracts` yields `Error: cannot resolve file at ...`.
+Testnet-only tokens, price feed and the script that deploys them. They are not part of the protocol
+and must never be deployed to mainnet. They live under `script/` because `forge --verify` only
+resolves contracts inside the paths forge indexes (`src`, `test`, `script`).
 
 Contents:
 
 - `MockStableERC20.sol` - ERC20 with a public `mint` (faucet: anyone can mint) and configurable
   decimals.
+- `TestnetPriceFeed.sol` - a Chainlink-style feed that reports a settable price, always freshly
+  timestamped; `setAnswer` simulates a depeg. The Sepolia deploy uses one `$1` feed for every asset.
 - `DeployMockStables.s.sol` - deploys the mocks simulating USDC, USDT and USDS. Each token is gated by
   a `DEPLOY_USDC` / `DEPLOY_USDT` / `DEPLOY_USDS` env flag so already-deployed mocks are not redeployed
   (defaults: only USDS on, USDC/USDT off).
@@ -28,8 +27,8 @@ deployed with 6, USDS with 18.
 | Mock USDT | `0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05` | 6 | 2026-07-10 |
 | Mock USDS | `0xdB82d075db6c2e30353825D78C21F472C2252D25` | 18 | 2026-08-20 |
 
-Topology under rehearsal: the hub (poolId 0) holds **USDC + USDS**; **USDT** is listed as the first
-spoke (poolId >= 1).
+Which mocks sit in the hub and which is a spoke differs per deploy; the current one is recorded in
+[deployments/sepolia.md](../../deployments/sepolia.md).
 
 ## Deploy + verify (Sepolia)
 
@@ -39,7 +38,7 @@ From `contracts/`, with the environment loaded (use the same `.env.sepolia` as t
 cd contracts
 set -a; source .env.sepolia; set +a
 
-forge script test/testnet-mocks/DeployMockStables.s.sol:DeployMockStables \
+forge script script/testnet/DeployMockStables.s.sol:DeployMockStables \
   --rpc-url sepolia --broadcast --verify
 ```
 
@@ -53,12 +52,12 @@ set -a; source .env.sepolia; set +a
 
 # Mock USDC - constructor("USD Coin (Mock)","USDC",6)
 forge verify-contract 0x0a9479f7aff770965b3b2D28b29E40C3F6168588 \
-  test/testnet-mocks/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
+  script/testnet/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
   --constructor-args $(cast abi-encode "constructor(string,string,uint8)" "USD Coin (Mock)" "USDC" 6)
 
 # Mock USDT - constructor("Tether USD (Mock)","USDT",6)
 forge verify-contract 0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05 \
-  test/testnet-mocks/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
+  script/testnet/MockStableERC20.sol:MockStableERC20 --chain sepolia --watch \
   --constructor-args $(cast abi-encode "constructor(string,string,uint8)" "Tether USD (Mock)" "USDT" 6)
 ```
 
