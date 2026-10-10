@@ -141,11 +141,13 @@ The probe is only as good as the token's transfer function. A token that rejects
 
 ## Roles
 
-Three roles, each transferred in two steps. The upgrader and the governor hand themselves off; the guardian is replaced by the governor. Details, timelocks, and the emergency playbook are in [SECURITY.md](../SECURITY.md).
+Five roles. The upgrader and the governor hand themselves off in two steps; the governor replaces the guardian (two steps) and the unpauser (one step). Details, timelocks, and the emergency playbook are in [SECURITY.md](../SECURITY.md).
 
 - **Upgrader.** Upgrades the implementation. Nothing else.
 - **Governor.** Lists assets, creates and removes spokes, sets price feeds, peg tolerance, staleness, the reserve floor, launch caps, probe exemptions, and runs `syncReserves` and `rescueTokens`. Behind a timelock.
-- **Guardian.** Pauses and unpauses globally, per asset, and per pool; tightens launch caps; runs `haircutEscrow`. No timelock.
+- **Pausers.** A list of addresses. Any one of them pauses globally, per asset, or per pool, alone and with no timelock. A pauser can do nothing else: it cannot lift a pause or change the list.
+- **Unpauser.** Lifts a pause globally, per asset, or per pool, and adds or removes a pauser with `setPauser`. No timelock. It has no power to pause.
+- **Guardian.** Tightens launch caps; runs `haircutEscrow`. No timelock. It cannot pause or unpause.
 
 A pause never blocks `withdraw` or `cancelQueue`. What each kind of pause blocks is tabulated in [SECURITY.md](../SECURITY.md#emergency-playbook-pause-then-fix).
 
@@ -164,11 +166,12 @@ What no role can do: cancel, move, reassign, or reprice a user's position other 
 | Pool contents | `getPoolAssets`, `getReserves`, `getReserve`, `getDlrsReserve`, `getReceiptShares`, `getReceiptTotalShares` |
 | Pool and asset configuration | `poolCount`, `poolKind`, `getPoolStatus`, `assetPoolId`, `assetDecimals`, `isAssetListed`, `getLaunchCap`, `getMinDlrsReserve`, `isProbeExempt` |
 | Pauses and price limits | `paused`, `isPoolPaused`, `isDepositPaused`, `pegTolerance`, `maxStaleness` |
+| Who can pause and unpause | `isPauser(account)`, `unpauser` |
 | Which build is running | `version` |
 
 Both pair views report an empty line (depth 0, base minimum) while either asset is unlisted, so a removed pool's lines never show there, before or after a relist. Positions on a removed pool are visible through `getUserQueuePositions` and `getQueuePosition` only.
 
-Position history is reconstructable from `QueueJoined`, `QueueFilled`, `QueueParked`, and `QueueCancelled`, joined on position id, except after `haircutEscrow`: it reduces positions and emits only the aggregate `EscrowHaircut`, so read `getQueuePosition` afterwards. Pool history is on `PoolCreated`, `SpokeWindDownStarted`, `PoolPausedSet`, and `PoolRemoved`. Exits emit one `Withdraw` per hub asset paid plus `SpokeWithdrawn` for a spoke exit. A spoke-to-spoke swap emits one `Swap` for the whole call and one `SpokeSwapRouted` per hub asset it used, with the amount routed through it. Deposits emit `Deposit` (hub) or `SpokeLiquidityAdded` (spoke). Configuration and loss handling are on `AssetListed`, `LaunchCapSet`, `MinDlrsReserveSet`, `ProbeExemptSet`, `DepositsPausedSet`, `ReservesSynced`, `EscrowHaircut` and `TokensRescued`.
+Position history is reconstructable from `QueueJoined`, `QueueFilled`, `QueueParked`, and `QueueCancelled`, joined on position id, except after `haircutEscrow`: it reduces positions and emits only the aggregate `EscrowHaircut`, so read `getQueuePosition` afterwards. Pool history is on `PoolCreated`, `SpokeWindDownStarted`, `PoolPausedSet`, and `PoolRemoved`. Exits emit one `Withdraw` per hub asset paid plus `SpokeWithdrawn` for a spoke exit. A spoke-to-spoke swap emits one `Swap` for the whole call and one `SpokeSwapRouted` per hub asset it used, with the amount routed through it. Deposits emit `Deposit` (hub) or `SpokeLiquidityAdded` (spoke). Configuration and loss handling are on `AssetListed`, `LaunchCapSet`, `MinDlrsReserveSet`, `ProbeExemptSet`, `DepositsPausedSet`, `ReservesSynced`, `EscrowHaircut` and `TokensRescued`. Changes to who may pause are on `PauserSet` and `UnpauserSet`.
 
 ## Reading the code
 

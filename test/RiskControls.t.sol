@@ -10,6 +10,7 @@ import {NormalizationLib} from "../src/libraries/NormalizationLib.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice M5: pauses (asset/pool), oracle peg check, syncReserves/rescueTokens.
 contract RiskControlsTest is Test {
@@ -18,6 +19,8 @@ contract RiskControlsTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -28,7 +31,8 @@ contract RiskControlsTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -64,7 +68,7 @@ contract RiskControlsTest is Test {
     function test_pauseDeposits_blocksDepositButNotExit() public {
         _deposit(alice, usdc, 1_000e6);
 
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdc));
         assertTrue(store.isDepositPaused(address(usdc)));
 
@@ -80,16 +84,16 @@ contract RiskControlsTest is Test {
         assertEq(store.getReserve(0, address(usdc)), 500e6, "withdraw works while paused");
     }
 
-    function test_pauseDeposits_onlyGuardian() public {
+    function test_pauseDeposits_onlyPauser() public {
         vm.prank(alice);
-        vm.expectRevert(IDollarStore.OnlyGuardian.selector);
+        vm.expectRevert(IDollarStore.OnlyPauser.selector);
         store.pauseDeposits(address(usdc));
     }
 
     // ============ Per-pool pause ============
 
     function test_pausePool_blocksInflows() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(0);
         assertTrue(store.isPoolPaused(0));
 
@@ -109,7 +113,7 @@ contract RiskControlsTest is Test {
 
         // USDT depegs and deposits are paused. processQueue must not push the escrowed USDT into
         // reserves (it is deposit-equivalent), so it reverts on the paused offer asset.
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdt));
 
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(usdt)));
@@ -311,11 +315,11 @@ contract RiskControlsTest is Test {
     // ============ Unpause (deposits / pool) ============
 
     function test_unpauseDeposits_restoresInflow() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdc));
         assertTrue(store.isDepositPaused(address(usdc)));
 
-        vm.prank(guardian);
+        vm.prank(unpauser);
         store.unpauseDeposits(address(usdc));
         assertFalse(store.isDepositPaused(address(usdc)), "unpaused");
 
@@ -324,11 +328,11 @@ contract RiskControlsTest is Test {
     }
 
     function test_unpausePool_restoresInflow() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(0);
         assertTrue(store.isPoolPaused(0));
 
-        vm.prank(guardian);
+        vm.prank(unpauser);
         store.unpausePool(0);
         assertFalse(store.isPoolPaused(0), "unpaused");
 
@@ -339,25 +343,25 @@ contract RiskControlsTest is Test {
     // ============ Pause / view revert paths ============
 
     function test_pauseDeposits_revertsUnlisted() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
         store.pauseDeposits(address(0xBEEF));
     }
 
     function test_unpauseDeposits_revertsUnlisted() public {
-        vm.prank(guardian);
+        vm.prank(unpauser);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
         store.unpauseDeposits(address(0xBEEF));
     }
 
     function test_pausePool_revertsInvalidPool() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(99)));
         store.pausePool(99);
     }
 
     function test_unpausePool_revertsInvalidPool() public {
-        vm.prank(guardian);
+        vm.prank(unpauser);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(99)));
         store.unpausePool(99);
     }

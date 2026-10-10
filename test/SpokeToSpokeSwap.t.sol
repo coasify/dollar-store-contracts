@@ -14,6 +14,7 @@ import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {MockReentrantERC20} from "./mocks/MockReentrantERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice swapSpokeToSpoke: spoke A asset -> hub asset `via` -> spoke B asset in one call, fill-or-revert.
 ///         Net effect of a reserve fill: spoke A gains its asset and loses hub claim, spoke B loses its
@@ -24,6 +25,8 @@ contract SpokeToSpokeSwapTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice"); // LP
     address internal bob = makeAddr("bob"); // spoke-to-spoke swapper
@@ -42,7 +45,8 @@ contract SpokeToSpokeSwapTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -319,7 +323,7 @@ contract SpokeToSpokeSwapTest is Test {
 
     function test_s2s_everyListedHubAssetCheckedUpFront() public {
         _seedSplit();
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdt));
 
         // Every hub asset in `via` is checked up front, even one the fill would not reach.
@@ -459,10 +463,10 @@ contract SpokeToSpokeSwapTest is Test {
         _swap(carol, address(usdt), address(usdg), 300e6); // queues: spoke B has no asset
         uint256 carolId = store.getUserQueuePositions(carol)[0];
         usdg.setBlocked(carol, true);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdt)); // keep the spoke B deposit from settling carol's line
         _deposit(spokeB, address(usdg), 1_000e18);
-        vm.prank(guardian);
+        vm.prank(unpauser);
         store.unpauseDeposits(address(usdt));
 
         assertEq(_s2s(bob, address(pyusd), address(usdg), address(usdt), 500e6), 500e18, "bob filled after carol");
@@ -567,10 +571,10 @@ contract SpokeToSpokeSwapTest is Test {
         for (uint256 i; i < 9; i++) {
             _swap(carol, address(usdt), address(usdg), 500e6); // queues: spoke B has no asset
         }
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdt)); // keep the spoke B deposit from settling carol's line
         _deposit(spokeB, address(usdg), 10_000e18);
-        vm.prank(guardian);
+        vm.prank(unpauser);
         store.unpauseDeposits(address(usdt));
 
         _expectS2sManyRevert(
@@ -691,7 +695,7 @@ contract SpokeToSpokeSwapTest is Test {
 
     function test_s2s_globalPause_reverts() public {
         _seedDefault();
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pause();
 
         _expectS2sRevert(
@@ -705,7 +709,7 @@ contract SpokeToSpokeSwapTest is Test {
 
     function test_s2s_wantPoolPaused_reverts() public {
         _seedDefault();
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spokeB);
 
         _expectS2sRevert(
@@ -719,7 +723,7 @@ contract SpokeToSpokeSwapTest is Test {
 
     function test_s2s_offerPoolPaused_reverts() public {
         _seedDefault();
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spokeA);
 
         _expectS2sRevert(
@@ -765,7 +769,7 @@ contract SpokeToSpokeSwapTest is Test {
 
     function test_s2s_offerDepositsPaused_reverts() public {
         _seedDefault();
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(pyusd));
 
         _expectS2sRevert(
@@ -779,7 +783,7 @@ contract SpokeToSpokeSwapTest is Test {
 
     function test_s2s_viaDepositsPaused_reverts() public {
         _seedDefault();
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdc));
 
         _expectS2sRevert(

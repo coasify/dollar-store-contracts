@@ -48,5 +48,5 @@ Use plain `MAJOR.MINOR.PATCH`, with no suffixes.
 
 | Version | Contents | Deployed |
 |---|---|---|
-| `0.11.0` | Spoke-to-spoke swaps (`swapSpokeToSpoke`), `getSwapQuote` matching the swap's fill, proportional exits, pool-scoped queue keys, parking. Dependencies pinned as submodules. | Not yet |
+| `0.11.0` | Spoke-to-spoke swaps (`swapSpokeToSpoke`), `getSwapQuote` matching the swap's fill, proportional exits, pool-scoped queue keys, parking. Pausing and unpausing as their own roles (pausers, unpauser). Dependencies pinned as submodules. | Not yet |
 | `0.10.0` | Pre-release integration build: proportional exits, pool-scoped queue keys and parking. No spoke-to-spoke swaps, and `getSwapQuote` returns 0 whenever a same-direction position is waiting. | Sepolia, block 11823702 |

@@ -11,6 +11,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice getSwapQuote reports what the swap would fill now, including when earlier same-direction
 ///         positions are waiting: the swap settles up to 8 of them from reserves first and fills the
@@ -21,6 +22,8 @@ contract SwapQuoteTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice"); // supplies reserves
     address internal bob = makeAddr("bob"); // the caller being quoted
@@ -34,7 +37,8 @@ contract SwapQuoteTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
 
         usdc = new MockERC20("USD Coin", "USDC", 6);
@@ -230,7 +234,7 @@ contract SwapQuoteTest is Test {
     function test_quote_globalPause_zero() public {
         _deposit(0, usdt, 1_000e6);
         assertEq(store.getSwapQuote(address(usdc), address(usdt), 100e6), 100e6, "positive before");
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pause();
         _quoteIsZeroAndSwapReverts(abi.encodeWithSelector(PausableUpgradeable.EnforcedPause.selector));
     }
@@ -238,7 +242,7 @@ contract SwapQuoteTest is Test {
     function test_quote_hubPoolPaused_zero() public {
         _deposit(0, usdt, 1_000e6);
         assertEq(store.getSwapQuote(address(usdc), address(usdt), 100e6), 100e6, "positive before");
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(0);
         _quoteIsZeroAndSwapReverts(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, uint16(0)));
     }
@@ -246,7 +250,7 @@ contract SwapQuoteTest is Test {
     function test_quote_offerDepositsPaused_zero() public {
         _deposit(0, usdt, 1_000e6);
         assertEq(store.getSwapQuote(address(usdc), address(usdt), 100e6), 100e6, "positive before");
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdc));
         _quoteIsZeroAndSwapReverts(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(usdc)));
     }

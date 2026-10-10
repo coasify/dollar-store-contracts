@@ -73,6 +73,27 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         _;
     }
 
+    /// @dev Restricts to an address that may pause. A pauser has no other power. The check is a
+    ///      function call so its code is not copied into every pause function (contract size).
+    modifier onlyPauser() {
+        _checkPauser();
+        _;
+    }
+
+    /// @dev Restricts to the current unpauser, which lifts pauses and sets who may pause.
+    modifier onlyUnpauser() {
+        _checkUnpauser();
+        _;
+    }
+
+    function _checkPauser() private view {
+        if (!CoreStorage.layout().pausers[msg.sender]) revert OnlyPauser();
+    }
+
+    function _checkUnpauser() private view {
+        if (msg.sender != CoreStorage.layout().unpauser) revert OnlyUnpauser();
+    }
+
     /// @dev Restricts to the current upgrader (read from namespaced core storage). The upgrader
     ///      holds UUPS upgrade authority and is kept separate from the governor (M8).
     modifier onlyUpgrader() {
@@ -95,11 +116,20 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Deploys a fresh DLRS bound to this proxy (address(this)) and stores its address.
     /// @param upgrader_ The upgrader address (UUPS upgrade authority; expected: timelock).
     /// @param governor_ The governor address (risk params + registry + caps; expected: timelock).
-    /// @param guardian_ The guardian address (emergency authority; expected: multisig).
-    function initialize(address upgrader_, address governor_, address guardian_) external initializer {
+    /// @param guardian_ The guardian address (tightens caps, haircuts escrow; expected: multisig).
+    /// @param unpauser_ The unpauser address (lifts pauses, sets pausers; expected: multisig).
+    /// @param pausers_ The addresses that may pause from the first block.
+    function initialize(
+        address upgrader_,
+        address governor_,
+        address guardian_,
+        address unpauser_,
+        address[] calldata pausers_
+    ) external initializer {
         if (upgrader_ == address(0)) revert ZeroAddress();
         if (governor_ == address(0)) revert ZeroAddress();
         if (guardian_ == address(0)) revert ZeroAddress();
+        if (unpauser_ == address(0)) revert ZeroAddress();
 
         __Pausable_init();
         // ReentrancyGuard (OZ v5.6+) is stateless/namespaced and has no initializer:
@@ -109,6 +139,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         $.upgrader = upgrader_;
         $.governor = governor_;
         $.guardian = guardian_;
+        $.unpauser = unpauser_;
+        for (uint256 i; i < pausers_.length; ++i) {
+            _setPauser($, pausers_[i], true);
+        }
         $.dlrs = address(new DLRS(address(this)));
         $.pegTolerance = DEFAULT_PEG_TOLERANCE_BPS;
         $.maxStaleness = DEFAULT_MAX_STALENESS;
@@ -149,6 +183,16 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @inheritdoc IDollarStore
     function pendingUpgrader() external view override returns (address) {
         return CoreStorage.layout().pendingUpgrader;
+    }
+
+    /// @inheritdoc IDollarStore
+    function unpauser() external view override returns (address) {
+        return CoreStorage.layout().unpauser;
+    }
+
+    /// @inheritdoc IDollarStore
+    function isPauser(address account) external view override returns (bool) {
+        return CoreStorage.layout().pausers[account];
     }
 
     /// @inheritdoc IDollarStore
@@ -227,18 +271,37 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         emit UpgraderTransferCompleted(previousUpgrader, $.upgrader);
     }
 
+    /// @inheritdoc IDollarStore
+    function setUnpauser(address newUnpauser) external override onlyGovernor {
+        if (newUnpauser == address(0)) revert ZeroAddress();
+        CoreStorage.Layout storage $ = CoreStorage.layout();
+        emit UnpauserSet($.unpauser, newUnpauser);
+        $.unpauser = newUnpauser;
+    }
+
     // ============ Emergency ============
 
     /// @inheritdoc IDollarStore
-    /// @dev Guardian-gated (instant).
-    function pause() external override onlyGuardian {
+    /// @dev Any pauser, instantly. Pausing only tightens, so one address may do it alone.
+    function pause() external override onlyPauser {
         _pause();
     }
 
     /// @inheritdoc IDollarStore
-    /// @dev Guardian-gated (instant).
-    function unpause() external override onlyGuardian {
+    /// @dev Unpauser-gated: lifting a pause loosens, so it does not sit with the pausers.
+    function unpause() external override onlyUnpauser {
         _unpause();
+    }
+
+    /// @inheritdoc IDollarStore
+    function setPauser(address account, bool allowed) external override onlyUnpauser {
+        _setPauser(CoreStorage.layout(), account, allowed);
+    }
+
+    function _setPauser(CoreStorage.Layout storage $, address account, bool allowed) private {
+        if (account == address(0)) revert ZeroAddress();
+        $.pausers[account] = allowed;
+        emit PauserSet(account, allowed);
     }
 
     // ============ Asset Registry (M2) ============
@@ -781,7 +844,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    function pauseDeposits(address asset) external override onlyGuardian {
+    function pauseDeposits(address asset) external override onlyPauser {
         RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
         if (!cfg.listed) revert AssetNotListed(asset);
         cfg.depositPaused = true;
@@ -789,7 +852,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    function unpauseDeposits(address asset) external override onlyGuardian {
+    function unpauseDeposits(address asset) external override onlyUnpauser {
         RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
         if (!cfg.listed) revert AssetNotListed(asset);
         cfg.depositPaused = false;
@@ -797,7 +860,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    function pausePool(uint16 poolId) external override onlyGuardian {
+    function pausePool(uint16 poolId) external override onlyPauser {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (poolId >= r.pools.length) revert InvalidPool(poolId);
         r.pools[poolId].paused = true;
@@ -805,7 +868,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    function unpausePool(uint16 poolId) external override onlyGuardian {
+    function unpausePool(uint16 poolId) external override onlyUnpauser {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (poolId >= r.pools.length) revert InvalidPool(poolId);
         if (r.pools[poolId].status == RegistryStorage.PoolStatus.Killed) revert PoolKilled(poolId);

@@ -14,7 +14,7 @@ library CoreStorage {
         ///         Does NOT hold upgrade authority (that is the upgrader, since M8).
         ///         Expected to be a TimelockController (short delay) in production.
         address governor;
-        /// @notice The guardian address: emergency authority (pause/unpause, tighten caps).
+        /// @notice The guardian address: tightens launch caps and haircuts escrow after a loss.
         ///         Expected to be a multi-sig in production (fast, no timelock).
         address guardian;
         /// @notice Pending governor for the two-step governor transfer.
@@ -35,6 +35,11 @@ library CoreStorage {
         address upgrader;
         /// @notice Pending upgrader for the two-step upgrader transfer. (M8)
         address pendingUpgrader;
+        /// @notice The unpauser address: lifts pauses and sets who may pause. It cannot pause.
+        ///         Expected to be a multi-sig with a higher quorum than any single pauser.
+        address unpauser;
+        /// @notice Addresses that may pause (everything, a pool, or an asset) and do nothing else.
+        mapping(address => bool) pausers;
     }
 
     /// @notice Precomputed ERC-7201 storage slot for namespace "dollarstore.storage.core".

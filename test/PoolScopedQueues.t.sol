@@ -8,6 +8,7 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Queue keys are scoped by pool, so a killed-and-relisted spoke never shares lines with its
 ///         predecessor: a leftover position cannot hold a spoke open, and a haircut after a relist
@@ -17,6 +18,8 @@ contract PoolScopedQueuesTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal lp = makeAddr("lp");
     address internal alice = makeAddr("alice");
@@ -41,7 +44,8 @@ contract PoolScopedQueuesTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
 
         usdc = new MockERC20("USD Coin", "USDC", 6);
@@ -199,10 +203,10 @@ contract PoolScopedQueuesTest is Test {
         // A budget of exactly two: the removed pool's line and the live line are distinct and each is
         // walked once. With asset-pair keys the live line was reached twice, squaring the ratio and
         // exhausting the budget.
-        vm.startPrank(guardian);
+        vm.prank(pauser);
         store.pausePool(0);
+        vm.prank(guardian);
         uint256 removed = store.haircutEscrow(address(usdc), 2);
-        vm.stopPrank();
         assertEq(removed, 100e6, "escrow reduced by exactly the shortfall");
         assertEq(_amount(oldId), 50e6, "removed pool's position shares the loss");
         assertEq(_amount(newId), 50e6, "live position shares the loss, pro rata once");

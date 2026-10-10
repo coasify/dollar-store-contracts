@@ -8,6 +8,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Mock "next version" implementation used to exercise the UUPS upgrade path.
 /// @dev Inherits the full M1 contract, adds a new feature and a reinitializer(2) hook.
@@ -28,6 +29,8 @@ contract DollarStoreM1Test is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -42,7 +45,8 @@ contract DollarStoreM1Test is Test {
 
     function setUp() public {
         impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         store = DollarStore(address(proxy));
     }
@@ -71,26 +75,29 @@ contract DollarStoreM1Test is Test {
 
     function test_initialize_revertsOnSecondCall() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        store.initialize(alice, alice, bob);
+        store.initialize(alice, alice, bob, bob, Pausers.one(bob));
     }
 
     function test_initialize_revertsOnZeroUpgrader() public {
         DollarStore freshImpl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (address(0), governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (address(0), governor, guardian, unpauser, Pausers.one(pauser)));
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         new ERC1967Proxy(address(freshImpl), initData);
     }
 
     function test_initialize_revertsOnZeroGovernor() public {
         DollarStore freshImpl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, address(0), guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, address(0), guardian, unpauser, Pausers.one(pauser)));
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         new ERC1967Proxy(address(freshImpl), initData);
     }
 
     function test_initialize_revertsOnZeroGuardian() public {
         DollarStore freshImpl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, address(0)));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, address(0), unpauser, Pausers.one(pauser)));
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         new ERC1967Proxy(address(freshImpl), initData);
     }
@@ -98,7 +105,7 @@ contract DollarStoreM1Test is Test {
     function test_implementation_disablesInitializers() public {
         // Calling initialize directly on the implementation must revert.
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(upgrader, governor, guardian);
+        impl.initialize(upgrader, governor, guardian, unpauser, Pausers.one(pauser));
     }
 
     // ============ Upgrade ============
@@ -267,24 +274,24 @@ contract DollarStoreM1Test is Test {
 
     // ============ Pause / Unpause ============
 
-    function test_pause_unpause_onlyGuardian() public {
-        // Non-guardian cannot pause.
+    function test_pause_unpause_roles() public {
+        // An address that is not a pauser cannot pause.
         vm.prank(alice);
-        vm.expectRevert(IDollarStore.OnlyGuardian.selector);
+        vm.expectRevert(IDollarStore.OnlyPauser.selector);
         store.pause();
 
-        // Guardian pauses.
-        vm.prank(guardian);
+        // A pauser pauses.
+        vm.prank(pauser);
         store.pause();
         assertTrue(store.paused(), "paused");
 
-        // Non-guardian cannot unpause.
+        // Only the unpauser can unpause.
         vm.prank(alice);
-        vm.expectRevert(IDollarStore.OnlyGuardian.selector);
+        vm.expectRevert(IDollarStore.OnlyUnpauser.selector);
         store.unpause();
 
-        // Guardian unpauses.
-        vm.prank(guardian);
+        // The unpauser unpauses.
+        vm.prank(unpauser);
         store.unpause();
         assertFalse(store.paused(), "unpaused");
     }
@@ -360,7 +367,7 @@ contract DollarStoreM1Test is Test {
 
     /// @notice Paused state survives an upgrade.
     function test_pausedState_persistsAcrossUpgrade() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pause();
         assertTrue(store.paused(), "paused before upgrade");
 
@@ -369,7 +376,7 @@ contract DollarStoreM1Test is Test {
         store.upgradeToAndCall(address(newImpl), "");
 
         assertTrue(store.paused(), "paused preserved across upgrade");
-        vm.prank(guardian);
+        vm.prank(unpauser);
         store.unpause();
         assertFalse(store.paused(), "unpause still works");
     }

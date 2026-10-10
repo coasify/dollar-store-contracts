@@ -9,6 +9,7 @@ import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Spoke exits: an LP burns receipt shares and receives their proportional slice of the spoke
 ///         asset and of the spoke's claim on hub dollars. Exits stay live under pause and are never
@@ -19,6 +20,8 @@ contract SpokeWithdrawTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -37,7 +40,8 @@ contract SpokeWithdrawTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -224,7 +228,7 @@ contract SpokeWithdrawTest is Test {
 
     function test_withdraw_liveUnderGlobalPause() public {
         _depositSpokeAsset(alice, 1_000e18);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pause();
         vm.prank(alice);
         (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);

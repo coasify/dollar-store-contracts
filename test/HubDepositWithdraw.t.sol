@@ -11,6 +11,7 @@ import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice M3: hub deposit/withdraw, DLRS mint/burn, decimal normalization, pause exit-path.
 contract HubDepositWithdrawTest is Test {
@@ -19,6 +20,8 @@ contract HubDepositWithdrawTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -36,7 +39,8 @@ contract HubDepositWithdrawTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -161,7 +165,7 @@ contract HubDepositWithdrawTest is Test {
     }
 
     function test_deposit_revertsWhenPaused() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pause();
         vm.startPrank(alice);
         usdc.approve(address(store), 1e6);
@@ -288,7 +292,7 @@ contract HubDepositWithdrawTest is Test {
     /// @notice Withdraw is an exit path: it must keep working while paused.
     function test_withdraw_worksWhenPaused() public {
         _deposit(alice, usdc, 1_000e6);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pause();
 
         vm.prank(alice);

@@ -110,9 +110,11 @@ probe against the mainnet tokens) runs on every push to `main`, every PR, and on
 
 ## Deployment
 
-The production deploy (two timelocks + a guardian Safe, wired at genesis) and the governance
+The production deploy (two timelocks, the guardian, veto and unpauser Safes and the first pausers,
+wired at genesis) and the governance
 rehearsal are documented step by step in **[DEPLOY.md](docs/DEPLOY.md)**. Roles: `upgrader` (UUPS
-upgrade authority), `governor` (risk/registry/caps) and `guardian` (fast emergency); see
+upgrade authority), `governor` (risk/registry/caps), `guardian` (tightens caps), pausers (pause only)
+and `unpauser` (lifts pauses); see
 **[SECURITY.md](SECURITY.md)**.
 
 Environment variables live in a `.env` file (see `.env.example`); never commit real keys.

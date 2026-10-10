@@ -9,6 +9,7 @@ import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice U2 P6: deposits into a spoke settle the queues the new liquidity can fill, and a
 ///         position whose payout fails is parked whether its escrow is a hub or a spoke asset.
@@ -18,6 +19,8 @@ contract SpokeQueueTriggerTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice"); // LP
     address internal bob = makeAddr("bob"); // queued trader
@@ -30,7 +33,8 @@ contract SpokeQueueTriggerTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -160,7 +164,7 @@ contract SpokeQueueTriggerTest is Test {
         uint256 q = _queue(bob, usdc, rlusd, 500e6); // queued while USDC is healthy
         assertEq(q, 500e6, "bob queued");
 
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pauseDeposits(address(usdc)); // guardian pauses USDC (e.g. after a depeg)
 
         // Alice deposits the healthy spoke asset; the trigger must skip bob's USDC->RLUSD queue.
@@ -176,7 +180,7 @@ contract SpokeQueueTriggerTest is Test {
         assertEq(store.getReserve(spoke, address(rlusd)), 1_000e6, "alice's full deposit sits in the spoke reserve");
 
         // Once USDC is healthy again the queue is still settleable via processQueue.
-        vm.prank(guardian);
+        vm.prank(unpauser);
         store.unpauseDeposits(address(usdc));
         store.processQueue(address(usdc), address(rlusd), 10);
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 0, "queue settled after unpause");
@@ -253,7 +257,7 @@ contract SpokeQueueTriggerTest is Test {
 
     function test_trigger_skipsQueueWhenOfferPoolPaused() public {
         _queueUsdcToRlusd();
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(0); // hub pool paused -> canInflow(usdc) false; does not block the spoke rlusd deposit
         _depositRlusdAndAssertSkipped();
     }

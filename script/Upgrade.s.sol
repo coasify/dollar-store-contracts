@@ -15,6 +15,10 @@ import {DollarStore} from "../src/DollarStore.sol";
 /// @dev Env vars:
 ///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key (must be / act as upgrader).
 ///      - PROXY (required): address of the existing ERC1967 proxy to upgrade.
+/// @dev A proxy upgraded from an implementation where the guardian paused has no unpauser and no
+///      pausers afterwards: nobody can pause, or lift a pause already set, until the governor calls
+///      setUnpauser and the unpauser calls setPauser. Schedule setUnpauser to execute together with
+///      the upgrade. A fresh deploy sets both in initialize().
 contract Upgrade is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");

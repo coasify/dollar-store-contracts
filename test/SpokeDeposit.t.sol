@@ -9,6 +9,7 @@ import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice U2 P3: spoke deposits. Spoke-asset LP enters the spoke reserve; hub-asset LP funds the
 ///         spoke's dlrsReserve. Both mint pro-rata receipt shares. No wallet DLRS for spoke LPs.
@@ -18,6 +19,8 @@ contract SpokeDepositTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -39,7 +42,8 @@ contract SpokeDepositTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -203,7 +207,7 @@ contract SpokeDepositTest is Test {
     }
 
     function test_deposit_globalPause_blocksSpokeDeposit() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pause();
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);

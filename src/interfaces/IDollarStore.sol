@@ -20,6 +20,10 @@ interface IDollarStore {
     event UpgraderTransferInitiated(address indexed currentUpgrader, address indexed pendingUpgrader);
     /// @notice Emitted when the pending upgrader accepts the upgrader role.
     event UpgraderTransferCompleted(address indexed previousUpgrader, address indexed newUpgrader);
+    /// @notice Emitted when the governor replaces the unpauser.
+    event UnpauserSet(address indexed previousUnpauser, address indexed newUnpauser);
+    /// @notice Emitted when an address is allowed to pause, or no longer allowed.
+    event PauserSet(address indexed account, bool allowed);
 
     // ============ Errors ============
 
@@ -35,6 +39,10 @@ interface IDollarStore {
     error OnlyUpgrader();
     /// @notice Caller is not the pending upgrader.
     error OnlyPendingUpgrader();
+    /// @notice Caller is not a pauser.
+    error OnlyPauser();
+    /// @notice Caller is not the unpauser.
+    error OnlyUnpauser();
     /// @notice A zero address was supplied where a non-zero address is required.
     error ZeroAddress();
 
@@ -52,6 +60,10 @@ interface IDollarStore {
     function upgrader() external view returns (address);
     /// @notice The pending upgrader (zero if no transfer in progress).
     function pendingUpgrader() external view returns (address);
+    /// @notice The current unpauser address.
+    function unpauser() external view returns (address);
+    /// @notice Whether `account` may pause.
+    function isPauser(address account) external view returns (bool);
     /// @notice The DLRS receipt token address.
     function dlrs() external view returns (address);
     /// @notice The semantic version of this implementation.
@@ -67,6 +79,8 @@ interface IDollarStore {
     function transferGuardian(address newGuardian) external;
     /// @notice Accept the guardian role. Callable only by the pending guardian.
     function acceptGuardian() external;
+    /// @notice Replace the unpauser. Governor-gated, so it waits in the governor timelock.
+    function setUnpauser(address newUnpauser) external;
     /// @notice Initiate a two-step upgrader transfer. Upgrader-gated (self-managed, not governor).
     function transferUpgrader(address newUpgrader) external;
     /// @notice Accept the upgrader role. Callable only by the pending upgrader.
@@ -74,10 +88,15 @@ interface IDollarStore {
 
     // ============ Emergency ============
 
-    /// @notice Pause the protocol. Guardian-gated.
+    /// @notice Pause the protocol. Callable by any pauser. Exits and queue cancels stay open.
     function pause() external;
-    /// @notice Unpause the protocol. Guardian-gated.
+    /// @notice Unpause the protocol. Unpauser-gated.
     function unpause() external;
+    /// @notice Allow `account` to pause, or stop allowing it. Unpauser-gated, with no delay, so a
+    ///         pauser that should not be pausing is removed at once. A pauser can pause the protocol,
+    ///         a pool or an asset, and can do nothing else. The unpauser may list any address,
+    ///         including a multi-sig or its own.
+    function setPauser(address account, bool allowed) external;
 
     // ============ Asset Registry (M2) ============
 
@@ -466,13 +485,13 @@ interface IDollarStore {
     ///         use should be the slowest listed feed's heartbeat plus margin, 25h for the 24h feeds on
     ///         Chainlink's mainnet stablecoins.
     function setMaxStaleness(uint256 staleness) external;
-    /// @notice Pause deposits/inflows of an asset. Guardian-gated. Exits stay open.
+    /// @notice Pause deposits/inflows of an asset. Callable by any pauser. Exits stay open.
     function pauseDeposits(address asset) external;
-    /// @notice Unpause deposits/inflows of an asset. Guardian-gated.
+    /// @notice Unpause deposits/inflows of an asset. Unpauser-gated.
     function unpauseDeposits(address asset) external;
-    /// @notice Pause a pool (blocks inflows involving it). Guardian-gated. Exits stay open.
+    /// @notice Pause a pool (blocks inflows involving it). Callable by any pauser. Exits stay open.
     function pausePool(uint16 poolId) external;
-    /// @notice Unpause a pool. Guardian-gated. Reverts if the pool is permanently killed.
+    /// @notice Unpause a pool. Unpauser-gated. Reverts if the pool is permanently killed.
     function unpausePool(uint16 poolId) external;
     /// @notice Sync recorded reserves down to the actual balance minus queue escrow, after an
     ///         external balance loss. Only decreases. Governor-gated (via timelock): it marks down
