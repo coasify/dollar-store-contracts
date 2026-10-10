@@ -1,7 +1,5 @@
 # Code quality & security checklist
 
-Paths are relative to `contracts/`.
-
 Run through this before finishing ANY change to the Solidity code. It captures the recurring items an
 external audit or static analyzer will otherwise flag, so we do not re-introduce them. Seeded from the
 OpenZeppelin audit "Notes" (N-01..N-04) and expanded with the standard public auditor checklists

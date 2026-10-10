@@ -117,7 +117,7 @@ it rounds to zero, is probed with a zero-value
 `transfer` from the contract to the caller, so the issuer of an asset the pool is backed by is still
 consulted. The probe relies on the token applying its transfer controls before checking the amount.
 
-Per token, checked against the mainnet contracts. `contracts/test/fork/IssuerProbeFork.t.sol` asserts
+Per token, checked against the mainnet contracts. `test/fork/IssuerProbeFork.t.sol` asserts
 every row except USDG, which the fork test does not cover yet:
 
 | Token | Restricts recipients | Zero-value transfer runs the control | Probe useful |

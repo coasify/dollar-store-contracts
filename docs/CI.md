@@ -1,30 +1,28 @@
 # Continuous Integration
 
-Paths are relative to `contracts/`.
-
 CI runs on every push to `main`, on every pull request, and once a day. The workflow is
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). It has three jobs, and all three run on
 each trigger.
 
 ## Job 1: build + test + coverage
 
-Runs in `contracts/`:
+Runs at the repository root:
 
 1. **Install Foundry** (`foundry-rs/foundry-toolchain`, pinned to `v1.8.3`).
-2. **Dependencies**: checked out as git submodules under `contracts/lib/`, pinned to exact
+2. **Dependencies**: checked out as git submodules under `lib/`, pinned to exact
    commits: OpenZeppelin Contracts `v5.6.1`, OpenZeppelin Contracts Upgradeable `v5.6.1`, and
    `forge-std` `v1.16.2`.
 3. **Format check**: `forge fmt --check` (fails on unformatted code).
 4. **Build**: `forge build --sizes`.
 5. **Test**: `forge test -vvv` (unit + fuzz + invariant suites).
 6. **Coverage gate**: `forge coverage --report lcov --ir-minimum`, then
-   [`ci/coverage_gate.py`](../contracts/ci/coverage_gate.py) parses `lcov.info` and fails the build if line
+   [`.github/scripts/coverage_gate.py`](../.github/scripts/coverage_gate.py) parses `lcov.info` and fails the build if line
    coverage of `src/` is below the threshold.
 
 ## Job 2: static analysis (Slither)
 
-Runs `crytic/slither-action` against `contracts/` using
-[`slither.config.json`](../contracts/slither.config.json). It builds the project and runs Slither with
+Runs `crytic/slither-action` against the repository using
+[`slither.config.json`](../slither.config.json). It builds the project and runs Slither with
 `fail-on: high`, so the job fails only on high-severity findings (medium/low/informational are
 reported but do not block).
 
@@ -45,13 +43,13 @@ would for that token, and governance should consider `setProbeExempt` for it.
 
 | Check | Threshold | Where |
 |---|---|---|
-| Line coverage (`src/` only) | **>= 90%** | `ci/coverage_gate.py` (`THRESHOLD`) |
+| Line coverage (`src/` only) | **>= 90%** | `.github/scripts/coverage_gate.py` (`THRESHOLD`) |
 | Slither | fail on **high** severity | `ci.yml` (`fail-on: high`) |
 | Formatting | must match `forge fmt` | `forge fmt --check` |
 | Fuzz runs | 256 per fuzz test | `foundry.toml` `[profile.default.fuzz]` |
 | Invariant runs / depth | 128 runs, depth 32 | `foundry.toml` `[profile.default.invariant]` |
 
-The coverage threshold lives in `ci/coverage_gate.py` (`THRESHOLD = 90.0`). Raise it as the suite
+The coverage threshold lives in `.github/scripts/coverage_gate.py` (`THRESHOLD = 90.0`). Raise it as the suite
 matures. Coverage uses `--ir-minimum` because the project builds with `via_ir = true`.
 
 ## What is tested
@@ -91,11 +89,10 @@ matures. Coverage uses `--ir-minimum` because the project builds with `via_ir = 
 ## Run the same checks locally
 
 ```bash
-cd contracts
 forge fmt --check
 forge build --sizes
 forge test -vvv
-forge coverage --report lcov --ir-minimum && python3 ci/coverage_gate.py
+forge coverage --report lcov --ir-minimum && python3 .github/scripts/coverage_gate.py
 # static analysis (requires slither: `pipx install slither-analyzer` or `pip install slither-analyzer`)
 slither . --config-file slither.config.json
 ```

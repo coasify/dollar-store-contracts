@@ -1,6 +1,6 @@
 # Versioning
 
-Paths are relative to `contracts/`, and commands run from there.
+Paths are relative to the repository root, and commands run from there.
 
 `DollarStore.version()` names the implementation a proxy runs. Anyone can call it on a deployed
 proxy to tell which build is live, so each deployed build must report a version no other build has

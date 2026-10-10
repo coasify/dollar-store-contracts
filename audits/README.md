@@ -10,4 +10,7 @@ commit on `main` that contains every fix the report reviewed. For the v3 report 
 were stacked and merged into `main` as one commit, so the commits the report names (such as
 `eb61b18`) are not ancestors of `main`; `5e2e241` has the same contract source as the last of them.
 
+The reports cite files under `contracts/`, where the project lived at the audited commits. The same
+files are now at the repository root: `contracts/src/DollarStore.sol` is `src/DollarStore.sol`.
+
 Files are named `YYYY-MM-firm-scope.pdf`, using the report's date. Newest first.

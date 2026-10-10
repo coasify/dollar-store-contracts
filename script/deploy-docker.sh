@@ -41,11 +41,11 @@ esac
 
 # Dependencies are git submodules pinned to exact commits. Refuse to build from anything else.
 if ! LIB_STATUS="$(git -C "$CONTRACTS_DIR" submodule status lib)"; then
-    echo "Error: could not read the submodule status of contracts/lib."
+    echo "Error: could not read the submodule status of lib."
     exit 1
 fi
 if grep -q '^[^ ]' <<<"$LIB_STATUS"; then
-    echo "Error: contracts/lib does not match the pinned submodule commits. Run: git submodule update --init"
+    echo "Error: lib does not match the pinned submodule commits. Run: git submodule update --init"
     exit 1
 fi
 

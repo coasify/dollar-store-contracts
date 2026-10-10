@@ -32,10 +32,9 @@ Which mocks sit in the hub and which is a spoke differs per deploy; the current 
 
 ## Deploy + verify (Sepolia)
 
-From `contracts/`, with the environment loaded (use the same `.env.sepolia` as the main deploy):
+From the repository root, with the environment loaded (use the same `.env.sepolia` as the main deploy):
 
 ```bash
-cd contracts
 set -a; source .env.sepolia; set +a
 
 forge script script/testnet/DeployMockStables.s.sol:DeployMockStables \
@@ -44,10 +43,9 @@ forge script script/testnet/DeployMockStables.s.sol:DeployMockStables \
 
 ## Verify already-deployed contracts (without redeploying)
 
-The mocks are already on-chain; they just need verification. From `contracts/`:
+The mocks are already on-chain; they just need verification. From the repository root:
 
 ```bash
-cd contracts
 set -a; source .env.sepolia; set +a
 
 # Mock USDC - constructor("USD Coin (Mock)","USDC",6)

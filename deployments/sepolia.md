@@ -85,4 +85,4 @@ guardian can cancel another proposer's operation.
 Read from the proxy on 2026-10-07: two pools; peg tolerance 100 bps; launch cap $1,000,000 on pool 0
 and none on pool 1; pool 1 active with a zero reserve floor; nothing paused; no liquidity (DLRS supply 0).
 
-See [docs/DEPLOY.md](../../docs/DEPLOY.md) for the runbook and [script/testnet/DEPLOYMENT.md](../script/testnet/DEPLOYMENT.md) for the mocks.
+See [docs/DEPLOY.md](../docs/DEPLOY.md) for the runbook and [sepolia-mocks.md](sepolia-mocks.md) for the mocks.

@@ -8,7 +8,7 @@ import {MockStableERC20} from "./MockStableERC20.sol";
 /// @title DeployMockStables - Deploys the mock stables for testnet (Sepolia)
 /// @notice Deploys faucet ERC20s with public mint, matching the real assets' decimals: USDC and USDT
 ///         use 6, USDS uses 18 (real Sky USDS). Which mock is a hub asset and which is a spoke is decided
-///         at listing time, not here. For testnet rehearsal only. The USDC/USDT mocks are already on-chain (see DEPLOYMENT.md); set the
+///         at listing time, not here. For testnet rehearsal only. The USDC/USDT mocks are already on-chain (see deployments/sepolia-mocks.md); set the
 ///         DEPLOY_* flags below to redeploy only what is missing (USDS) instead of the whole set.
 /// @dev Env vars:
 ///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key.
