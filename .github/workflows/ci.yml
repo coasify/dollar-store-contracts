@@ -14,15 +14,11 @@ jobs:
         working-directory: contracts
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Install dependencies
-        run: |
-          forge install OpenZeppelin/openzeppelin-contracts@v5.6.1
-          forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.6.1
-          forge install foundry-rs/forge-std
 
       - name: Check formatting
         run: forge fmt --check
@@ -43,16 +39,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Install dependencies
-        working-directory: contracts
-        run: |
-          forge install OpenZeppelin/openzeppelin-contracts@v5.6.1
-          forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.6.1
-          forge install foundry-rs/forge-std
 
       - name: Run Slither
         uses: crytic/slither-action@v0.4.0

@@ -8,9 +8,9 @@ CI runs on every push to `main` and on every pull request. The workflow is
 Runs in `contracts/`:
 
 1. **Install Foundry** (`foundry-rs/foundry-toolchain`).
-2. **Install dependencies** (pinned): OpenZeppelin Contracts `v5.6.1`, OpenZeppelin Contracts
-   Upgradeable `v5.6.1`, and `forge-std`. Dependencies are not committed (`contracts/lib/` is
-   git-ignored), so CI fetches them.
+2. **Dependencies**: OpenZeppelin Contracts `v5.6.1`, OpenZeppelin Contracts Upgradeable `v5.6.1`,
+   and forge-std `v1.16.2` are git submodules in `contracts/lib/`, pinned to exact commits. CI
+   checks them out with the repository.
 3. **Format check**: `forge fmt --check` (fails on unformatted code).
 4. **Build**: `forge build --sizes`.
 5. **Test**: `forge test -vvv` (unit + fuzz + invariant suites).
