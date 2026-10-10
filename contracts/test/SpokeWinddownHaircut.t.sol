@@ -27,8 +27,8 @@ contract SpokeWinddownHaircutTest is Test {
 
     event SpokeWindDownStarted(uint16 indexed poolId);
     event EscrowHaircut(address indexed asset, uint16 indexed poolId, uint256 oldEscrow, uint256 newEscrow);
-    event SpokeRedeemed(
-        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 dlrsUnits
+    event SpokeWithdrawn(
+        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 hubUnits
     );
 
     function setUp() public {
@@ -121,8 +121,8 @@ contract SpokeWinddownHaircutTest is Test {
         store.windDownSpoke(spoke);
 
         vm.prank(alice);
-        uint256 out = store.withdraw(spoke, address(rlusd), 1_000e6, block.timestamp);
-        assertEq(out, 1_000e18, "LP can still exit while winding down");
+        (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        assertEq(spokeUnits, 1_000e6, "LP can still exit while winding down");
     }
 
     function test_windDownSpoke_quoteSpokeToHubZero() public {
@@ -287,16 +287,16 @@ contract SpokeWinddownHaircutTest is Test {
         store.removePool(spoke);
     }
 
-    // ============ Proportional redeem (drain both sides, then kill) ============
+    // ============ Proportional withdraw (drain both sides, then kill) ============
 
-    function test_redeemSpoke_proportional() public {
+    function test_withdrawSpoke_proportional() public {
         _depositSpokeAsset(alice, 1_000e18); // spokeReserve 1000, shares 1000
         _fund(alice, 1_000e6); // dlrsReserve 1000, +1000 shares -> total 2000
 
         vm.expectEmit(true, true, false, true, address(store));
-        emit SpokeRedeemed(spoke, alice, 1_000e6, 500e6, 500e6);
+        emit SpokeWithdrawn(spoke, alice, 1_000e6, 500e6, 500e6);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.redeemSpoke(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
 
         assertEq(spokeUnits, 500e6, "half the spoke side");
         assertEq(dlrsUnits, 500e6, "half the dlrs side");
@@ -309,7 +309,7 @@ contract SpokeWinddownHaircutTest is Test {
 
     /// @notice The fix: after real use (both sides funded + a swap shifts composition), redeeming all
     ///         shares drains BOTH reserves to exactly zero, so removePool can then kill the spoke.
-    function test_redeemSpoke_fullDrainThenRemovePool() public {
+    function test_withdrawSpoke_fullDrainThenRemovePool() public {
         _depositSpokeAsset(alice, 1_000e18); // S 1000, shares 1000
         _fund(alice, 1_000e6); // D 1000, total 2000, hub usdc 1000
 
@@ -323,7 +323,7 @@ contract SpokeWinddownHaircutTest is Test {
         assertEq(store.getDlrsReserve(spoke), 1_300e6, "dlrs reserve after swap");
 
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.redeemSpoke(spoke, 2_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 2_000e6, block.timestamp);
         assertEq(spokeUnits, 700e6, "drains the whole spoke side");
         assertEq(dlrsUnits, 1_300e6, "drains the whole dlrs side");
 
@@ -339,47 +339,47 @@ contract SpokeWinddownHaircutTest is Test {
         assertEq(store.getPoolStatus(spoke), 2, "spoke killed");
     }
 
-    function test_redeemSpoke_liveUnderPause() public {
+    function test_withdrawSpoke_liveUnderPause() public {
         _depositSpokeAsset(alice, 1_000e18);
         _fund(alice, 1_000e6);
         vm.prank(guardian);
         store.pausePool(spoke);
 
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.redeemSpoke(spoke, 2_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 2_000e6, block.timestamp);
         assertEq(spokeUnits, 1_000e6, "spoke side");
         assertEq(dlrsUnits, 1_000e6, "dlrs side redeemable while paused");
     }
 
-    function test_redeemSpoke_revertsInsufficientShares() public {
+    function test_withdrawSpoke_revertsInsufficientShares() public {
         _depositSpokeAsset(alice, 1_000e18);
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, uint256(2_000e6), uint256(1_000e6))
         );
-        store.redeemSpoke(spoke, 2_000e6, block.timestamp);
+        store.withdraw(spoke, 2_000e6, block.timestamp);
     }
 
-    function test_redeemSpoke_revertsZeroShares() public {
+    function test_withdrawSpoke_revertsZeroShares() public {
         _depositSpokeAsset(alice, 1_000e18);
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.redeemSpoke(spoke, 0, block.timestamp);
+        store.withdraw(spoke, 0, block.timestamp);
     }
 
-    function test_redeemSpoke_revertsExpiredDeadline() public {
+    function test_withdrawSpoke_revertsExpiredDeadline() public {
         _depositSpokeAsset(alice, 1_000e18);
         vm.warp(1000);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, uint256(999), uint256(1000)));
-        store.redeemSpoke(spoke, 1_000e6, 999);
+        store.withdraw(spoke, 1_000e6, 999);
     }
 
     /// @notice The DLRS side is always hub-backed, so the greedy payout normally covers dlrsUnits in
     ///         full. This drives the defensive `remaining != 0` branch by impairing the hub reserve
     ///         (simulated seizure + syncReserves) so it can no longer cover the dlrs slice: the redeem
     ///         reverts atomically instead of paying out a partial, accounting-corrupting amount.
-    function test_redeemSpoke_revertsIfHubReserveImpaired() public {
+    function test_withdrawSpoke_revertsIfHubReserveImpaired() public {
         _depositSpokeAsset(alice, 1_000e18); // spokeReserve 1000, shares 1000
         _fund(alice, 1_000e6); // dlrsReserve 1000, hub usdc 1000, total shares 2000
 
@@ -394,11 +394,11 @@ contract SpokeWinddownHaircutTest is Test {
                 IDollarStore.InsufficientReserves.selector, address(rlusd), uint256(1_000e6), uint256(400e6)
             )
         );
-        store.redeemSpoke(spoke, 2_000e6, block.timestamp);
+        store.withdraw(spoke, 2_000e6, block.timestamp);
     }
 
     /// @notice The dlrs payout walks the hub-asset set greedily; here it spans usdc then usdt.
-    function test_redeemSpoke_dlrsPayoutSplitsAcrossHubAssets() public {
+    function test_withdrawSpoke_dlrsPayoutSplitsAcrossHubAssets() public {
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.prank(governor);
         store.addHubAsset(address(usdt), address(feed));
@@ -413,7 +413,7 @@ contract SpokeWinddownHaircutTest is Test {
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 usdtBefore = usdt.balanceOf(alice);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.redeemSpoke(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
 
         assertEq(spokeUnits, 0, "funding-only spoke: no spoke-asset side");
         assertEq(dlrsUnits, 1_000e6, "full dlrs side");

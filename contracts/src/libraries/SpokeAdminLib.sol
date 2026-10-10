@@ -17,7 +17,7 @@ import {NormalizationLib} from "./NormalizationLib.sol";
 ///         Holds the rarely-called spoke-admin functions - spoke creation and the reserve write-down /
 ///         excess-sweep tools - so the hot swap/deposit/withdraw paths stay inline in DollarStore (no
 ///         delegatecall overhead on trades). The remaining spoke tooling (wind-down / escrow-haircut /
-///         removePool / redeemSpoke) lives in SpokeLifecycleLib; the directed-swap engine lives in
+///         removePool / withdraw) lives in SpokeLifecycleLib; the directed-swap engine lives in
 ///         SwapRouteLib. All three are linked and deployed with the implementation (full feature set,
 ///         single deployment).
 /// @dev Access control (onlyGovernor / onlyGuardian / nonReentrant) stays on the DollarStore wrappers
@@ -65,7 +65,13 @@ library SpokeAdminLib {
         p.minDlrsReserve = minDlrsReserve_;
 
         r.assetConfig[spokeAsset] = RegistryStorage.AssetConfig({
-            poolId: poolId, decimals: dec, scalingFactor: sf, priceFeed: priceFeed, listed: true, depositPaused: false
+            poolId: poolId,
+            decimals: dec,
+            scalingFactor: sf,
+            priceFeed: priceFeed,
+            listed: true,
+            depositPaused: false,
+            probeExempt: false
         });
         p.assets.push(spokeAsset);
 

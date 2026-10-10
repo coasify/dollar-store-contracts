@@ -25,6 +25,18 @@ Runs `crytic/slither-action` against `contracts/` using
 `fail-on: high`, so the job fails only on high-severity findings (medium/low/informational are
 reported but do not block).
 
+## Job 3: exit probe vs mainnet tokens (`fork-probe`)
+
+Runs `test/fork/` against a mainnet fork on every push, pull request, and once a day. These tests
+verify that the exit probe (a zero-value `transfer` to the caller for each pool asset an exit does not
+pay) answers correctly for the real contracts of every token the protocol intends to list: it must
+succeed to an unrestricted wallet and, for tokens that restrict recipients, fail to a frozen one.
+
+The job needs the `MAINNET_RPC_URL` repository secret and fails if it is missing, because the fork
+tests skip silently without it. The daily run is the monitor for a listed token changing its
+zero-value transfer behavior; a failure there means the probe no longer answers as a real payout
+would for that token, and governance should consider `setProbeExempt` for it.
+
 ## Thresholds
 
 | Check | Threshold | Where |

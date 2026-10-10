@@ -134,21 +134,11 @@ interface IDollarStore {
         uint256 valueUnits,
         uint256 sharesMinted
     );
-    /// @notice Emitted when a spoke LP burns receipt shares and withdraws value in a chosen asset.
-    ///         `sharesBurned` is the receipt shares burned; `valueUnits` the normalized 6dp value paid.
-    event SpokeLiquidityRemoved(
-        uint16 indexed poolId,
-        address indexed provider,
-        address indexed asset,
-        uint256 sharesBurned,
-        uint256 valueUnits,
-        uint256 nativeAmount
-    );
-    /// @notice Emitted when an LP proportionally redeems spoke shares across both sides of the pool
-    ///         (its spoke asset and its DLRS-side hub assets). `spokeUnits`/`dlrsUnits` are the
-    ///         normalized 6dp value paid from the spoke reserve and the DLRS side respectively.
-    event SpokeRedeemed(
-        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 dlrsUnits
+    /// @notice Emitted when an LP burns spoke receipt shares and receives their proportional slice of
+    ///         both sides: `spokeUnits` from the spoke asset reserve and `hubUnits` from the spoke's claim
+    ///         on hub dollars (paid across hub assets, one `Withdraw` event per hub asset). 6dp units.
+    event SpokeWithdrawn(
+        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 hubUnits
     );
 
     /// @notice The pool exists but is not a spoke (operation is spoke-only).
@@ -159,6 +149,8 @@ interface IDollarStore {
     error MaxPoolsReached();
     /// @notice The caller does not hold enough receipt shares for the requested spoke withdrawal.
     error InsufficientReceiptShares(uint256 requested, uint256 available);
+    /// @notice `asset` will not deliver to `wallet`, so the exit is refused.
+    error ExitBlockedByIssuer(address asset, address wallet);
 
     /// @notice Create a spoke pool for `spokeAsset`. Governor-gated (timelock). Reads and freezes the
     ///         token decimals, computes the scaling factor, requires a Chainlink feed, and sets the
@@ -169,7 +161,8 @@ interface IDollarStore {
     /// @return poolId The new spoke's pool id (>= 1).
     function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve) external returns (uint16 poolId);
 
-    /// @notice Set a spoke's protected minimum DLRS-side reserve. Governor-gated (timelock). Spoke-only.
+    /// @notice Set a spoke's minimum DLRS-side reserve. Governor-gated (timelock). Spoke-only. The floor
+    ///         bounds spoke->hub SWAPS only: LP exits are senior to it and may take the claim below it.
     function setMinDlrsReserve(uint16 poolId, uint256 newMin) external;
 
     /// @notice Kill a spoke with zero spoke reserves and zero dlrsReserve. Worthless LP shares remain as
@@ -181,18 +174,7 @@ interface IDollarStore {
     ///         again or unpaused.
     function removePool(uint16 poolId) external;
 
-    /// @notice Proportionally redeem `shares` of a spoke: pays the pro-rata slice of BOTH the spoke
-    ///         asset (from its reserve) and the DLRS side (from hub reserves) in a single call, so an LP
-    ///         can drain their position without leaving rounding dust stuck on one side. Exit path: live
-    ///         under pause, not gated by minDlrsReserve. Burning the last shares drains both reserves to
-    ///         exactly zero, which is what lets a fully-exited spoke be removed.
-    /// @return spokeUnits The normalized 6dp value paid from the spoke reserve.
-    /// @return dlrsUnits The normalized 6dp value paid from the DLRS side (across hub assets).
-    function redeemSpoke(uint16 poolId, uint256 shares, uint256 deadline)
-        external
-        returns (uint256 spokeUnits, uint256 dlrsUnits);
-
-    /// @notice A pool's protected minimum DLRS-side reserve (0 for the hub).
+    /// @notice A spoke's minimum DLRS-side reserve for swaps (0 for the hub). Not a floor for LP exits.
     function getMinDlrsReserve(uint16 poolId) external view returns (uint256);
     /// @notice A pool's internal DLRS-side reserve, normalized 6dp (0 for the hub).
     function getDlrsReserve(uint16 poolId) external view returns (uint256);
@@ -242,7 +224,7 @@ interface IDollarStore {
     event Deposit(
         address indexed user, uint16 indexed poolId, address indexed asset, uint256 nativeAmount, uint256 units
     );
-    /// @notice Emitted on a withdrawal.
+    /// @notice Emitted once per hub asset paid on a withdrawal (hub exits pay every hub asset held).
     event Withdraw(
         address indexed user, uint16 indexed poolId, address indexed asset, uint256 units, uint256 nativeAmount
     );
@@ -269,11 +251,22 @@ interface IDollarStore {
         external
         returns (uint256 receiptUnits);
 
-    /// @notice Burn `units` DLRS and withdraw a hub asset 1:1. Exit path — not blocked by pause.
-    /// @return nativeAmountOut The native token amount sent to the caller.
-    function withdraw(uint16 poolId, address asset, uint256 units, uint256 deadline)
+    /// @notice Proportional exit. Hub (poolId 0): burn `units` DLRS and receive your slice of every hub
+    ///         asset. Spoke (poolId >= 1): burn `units` receipt shares and receive your slice of the spoke
+    ///         asset and of the spoke's claim on hub dollars. The caller never chooses an asset: to end up
+    ///         100% in one asset, withdraw and then `swap`, which respects the queue.
+    ///         Exits are not pausable and are senior to minDlrsReserve: a spoke exit may take the claim
+    ///         below the floor, and a fresh deposit followed by an exit returns the pool's mix, so it can
+    ///         still move part of a deposit into hub assets without queueing. Pool assets of which the
+    ///         exit pays none are probed with a zero-value transfer unless exempted by governance;
+    ///         reverts ExitBlockedByIssuer if the probe fails.
+    /// @return spokeUnits Value paid from the spoke asset reserve, in normalized 6-decimal accounting
+    ///         units (0 for a hub exit). Tokens are sent in their own decimals.
+    /// @return hubUnits Value paid in hub assets, in the same units (equals the DLRS burned for a hub
+    ///         exit). Per-asset native amounts are on the Withdraw events.
+    function withdraw(uint16 poolId, uint256 units, uint256 deadline)
         external
-        returns (uint256 nativeAmountOut);
+        returns (uint256 spokeUnits, uint256 hubUnits);
 
     /// @notice All assets in a pool and their reserves (normalized 6dp). Reverts InvalidPool if absent.
     function getReserves(uint16 poolId) external view returns (address[] memory assets, uint256[] memory amounts);
@@ -399,6 +392,7 @@ interface IDollarStore {
     // ============ Risk Controls (M5) ============
 
     event PriceFeedUpdated(address indexed asset, address indexed feed);
+    event ProbeExemptSet(address indexed asset, bool exempt);
     event PegToleranceSet(uint256 tolerance);
     event MaxStalenessSet(uint256 staleness);
     event DepositsPausedSet(address indexed asset, bool paused);
@@ -434,6 +428,14 @@ interface IDollarStore {
     /// @notice Update the Chainlink price feed for a listed asset. Governor-gated (via timelock).
     ///         Reverts if the feed reports more than 18 decimals.
     function setPriceFeed(address asset, address feed) external;
+    /// @notice Exempt an asset from the zero-value transfer probe on exits, or re-enable it. Governor-gated
+    ///         (via timelock). Exempting disables the issuer check for exits that pay none of the asset:
+    ///         its issuer is then not consulted on those exits at all. Real transfers of the asset still
+    ///         run the token's own controls. Use only when the token rejects zero-value transfers (which
+    ///         would otherwise block such exits for everyone) or does not apply its controls to them.
+    function setProbeExempt(address asset, bool exempt) external;
+    /// @notice Whether an asset is exempt from the exit probe.
+    function isProbeExempt(address asset) external view returns (bool);
     /// @notice Set the peg tolerance (basis points). Governor-gated (via timelock).
     function setPegTolerance(uint256 tolerance) external;
     /// @notice Set the max oracle staleness (seconds). Governor-gated (via timelock). Must be above 0

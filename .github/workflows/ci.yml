@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 6 * * *" # daily: catches listed tokens changing their zero-value transfer behavior
 
 jobs:
   build-test:
@@ -51,3 +53,29 @@ jobs:
           target: contracts/
           slither-config: contracts/slither.config.json
           fail-on: high
+
+  fork-probe:
+    name: exit probe vs mainnet tokens
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Require the RPC secret (the fork tests skip silently without it)
+        run: |
+          if [ -z "$MAINNET_RPC_URL" ]; then
+            echo "MAINNET_RPC_URL secret is not set; the fork tests would skip." >&2
+            exit 1
+          fi
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Fork tests
+        run: forge test --match-path "test/fork/*" -vvv

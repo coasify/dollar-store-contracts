@@ -256,7 +256,7 @@ contract HubSwapFallbackTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        store.withdraw(0, address(evil), 100e6, block.timestamp);
+        store.withdraw(0, 100e6, block.timestamp);
     }
 
     // ============ Cross-decimal swaps ============
@@ -376,12 +376,6 @@ contract HubSwapFallbackTest is Test {
         vm.stopPrank();
     }
 
-    function test_withdraw_revertsAssetNotListed() public {
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
-        store.withdraw(0, address(0xBEEF), 1e6, block.timestamp);
-    }
-
     // U2 (spoke withdraw dispatch): withdrawing from a non-existent pool now reverts InvalidPool, not
     // WrongPool. A hub asset targeted at poolId 1 is no longer inherently "wrong" — if pool 1 were a
     // live spoke it would route to a hub-asset spoke exit (_withdrawSpokeHubAsset). It only fails here
@@ -390,7 +384,7 @@ contract HubSwapFallbackTest is Test {
     function test_withdraw_revertsInvalidPool_nonexistentPool() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(1)));
-        store.withdraw(1, address(usdc), 1e6, block.timestamp);
+        store.withdraw(1, 1e6, block.timestamp);
     }
 
     function test_swap_revertsWantNotListed() public {

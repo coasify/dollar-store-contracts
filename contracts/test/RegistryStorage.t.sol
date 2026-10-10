@@ -35,7 +35,8 @@ contract RegistryStorageHarness {
             scalingFactor: sf,
             priceFeed: address(0xFEED),
             listed: true,
-            depositPaused: false
+            depositPaused: false,
+            probeExempt: false
         });
     }
 

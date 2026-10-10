@@ -91,7 +91,7 @@ Record from the logs (or from `broadcast/`): `DollarStore proxy`, `DollarStore i
 `governor timelock`. You will use these in every later phase.
 
 `DollarStore` links three external libraries - `SpokeAdminLib` (spoke create + reserve write-down /
-rescue), `SpokeLifecycleLib` (wind-down / haircut / removePool / redeemSpoke), and `SwapRouteLib`
+rescue), `SpokeLifecycleLib` (wind-down / haircut / removePool / withdraw), and `SwapRouteLib`
 (the directed-swap routing / fill / FIFO-settle engine used by swap / swapExactInput / processQueue /
 cancelQueue) - so the implementation stays under the EIP-170 24576-byte limit while shipping the full
 feature set. `forge script` deploys all three libraries and links them automatically during the
@@ -148,6 +148,14 @@ With the Safe (production): Safe -> New transaction -> Transaction Builder, targ
 timelock, function `schedule(...)` with the payload below. Sign 3-of-5. After the delay, another tx
 to the same timelock `execute(...)` (execution is open, anyone can execute).
 
+Before listing an asset, check it against the listing precondition in [SECURITY.md](SECURITY.md):
+
+1. The token must not freeze only the sender. A sender-only freeze is invisible to the exit's
+   zero-value transfer check, so such a token needs an issuer-query adapter before it can be listed.
+2. The token must accept a zero-value transfer. If it rejects one, every exit that pays none of it
+   reverts; exempt it with `setProbeExempt(asset, true)` (governor) and accept that its issuer is
+   then not checked on those exits.
+
 With an EOA operator (testnet quick rehearsal only):
 
 ```bash
@@ -167,7 +175,7 @@ cast send $GOV_TL "execute(address,uint256,bytes,bytes32,bytes32)" \
   --private-key $ANY_KEY --rpc-url sepolia
 ```
 
-Repeat for USDT and for `setLaunchCap(uint16,uint256)` (poolId 0). Check with
+Repeat for each other hub asset and for `setLaunchCap(uint16,uint256)` (poolId 0). Check with
 `cast call $PROXY "isAssetListed(address)(bool)" $USDC`.
 
 ## Phase 4 - Governance rehearsal (mandatory on Sepolia)
@@ -190,6 +198,8 @@ Before mainnet:
 - Full Sepolia rehearsal completed and green.
 - External review closed (fixes merged + re-tested).
 - `security.txt` ready to publish (contact admin@dollarstore.world).
+- Every asset to be listed meets the listing precondition in SECURITY.md, with `setProbeExempt` set
+  where a token rejects zero-value transfers.
 
 Mainnet is the same sequence with `.env.mainnet` (real Safes, 7d/2d delays). Before the first
 deposit, confirm on-chain: roles = timelocks/Safe, assets listed, caps active, expected `version()`,
