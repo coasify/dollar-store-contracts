@@ -282,6 +282,9 @@ interface IDollarStore {
         uint256 amountFilled,
         uint256 amountQueued
     );
+    /// @notice Emitted by swapSpokeToSpoke once per entry in `via` that carried part of the swap, with the
+    ///         normalized amount routed through that hub asset. The whole call also emits one Swap.
+    event SpokeSwapRouted(address indexed user, address indexed via, uint256 amount);
     /// @notice Emitted when a new queue position is created. `poolId` is the pool whose lines it joins.
     event QueueJoined(
         uint256 indexed positionId,
@@ -302,7 +305,7 @@ interface IDollarStore {
 
     /// @notice offerAsset == wantAsset is not a valid swap.
     error SameAsset();
-    /// @notice The (offerAsset, wantAsset) route is not supported (e.g., involves a spoke; deferred).
+    /// @notice The (offerAsset, wantAsset) route is not supported, e.g. spoke to spoke through swap().
     error InvalidRoute(address offerAsset, address wantAsset);
     /// @notice A non-zero tip was supplied; priority tips are a post-launch upgrade (U1).
     error TipNotEnabled();
@@ -347,6 +350,22 @@ interface IDollarStore {
         address wantAsset,
         uint256 amount,
         uint256 minAmountOut,
+        uint256 deadline
+    ) external returns (uint256 amountOut);
+
+    /// @notice All-or-nothing swap between two spoke assets through the hub assets in `via`, tried in
+    ///         order. For each, a spoke->hub leg fills what it can, like swapExactInput (opposite queue,
+    ///         then reserves behind any same-direction queue), and a hub->spoke leg pays that amount out;
+    ///         if the second leg falls short, or the list runs out before the full amount fills, the
+    ///         call reverts. Never queues. `offerAsset` and every `via` are inflow-checked. To quote a
+    ///         single hub asset, chain getSwapQuote(via, wantAsset, getSwapQuote(offerAsset, via, amount)):
+    ///         the swap fills if that equals `amount` in normalized units. Simulate the call for a list.
+    /// @return amountOut Amount of wantAsset delivered (native units of wantAsset).
+    function swapSpokeToSpoke(
+        address offerAsset,
+        address wantAsset,
+        address[] calldata via,
+        uint256 amount,
         uint256 deadline
     ) external returns (uint256 amountOut);
 
