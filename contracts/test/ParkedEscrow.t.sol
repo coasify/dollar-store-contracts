@@ -306,6 +306,17 @@ contract ParkedEscrowTest is Test {
         assertEq(store.getQueueDepth(address(pyusd), address(0)), 0, "parked line empty");
     }
 
+    /// @notice The parked line takes no orders: its length does not change the minimum reported for it,
+    ///         while its depth is still reported.
+    function test_minimumOrderSize_parkedLine_isTheBaseMinimum() public {
+        usdc.setBlocked(alice, true);
+        for (uint256 i; i < 25; i++) {
+            _parkOneUnit();
+        }
+        assertEq(store.getQueueDepth(address(pyusd), address(0)), 25, "25 parked");
+        assertEq(store.getMinimumOrderSize(address(pyusd), address(0)), 500e6, "base minimum");
+    }
+
     // ============ The issuer of the asset being paid decides; the escrowed asset's issuer is not asked ============
 
     /// @notice A queued owner blocked on the asset they escrowed, but not on the asset they will receive,
