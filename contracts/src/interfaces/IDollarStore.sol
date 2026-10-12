@@ -364,7 +364,8 @@ interface IDollarStore {
 
     /// @notice Permissionless bounded fallback: fill up to `maxPositions` of the (offerAsset ->
     ///         wantAsset) queue from available reserves, in FIFO order.
-    /// @return positionsProcessed Number of positions filled or partially filled.
+    /// @return positionsProcessed Number of positions visited: filled, partially filled, or parked
+    ///         because the payout failed. Parked positions count toward `maxPositions`.
     /// @return amountFilled Total amount filled (normalized 6dp).
     function processQueue(address offerAsset, address wantAsset, uint256 maxPositions)
         external
