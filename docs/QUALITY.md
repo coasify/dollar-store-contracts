@@ -1,5 +1,7 @@
 # Code quality & security checklist
 
+Paths are relative to `contracts/`.
+
 Run through this before finishing ANY change to the Solidity code. It captures the recurring items an
 external audit or static analyzer will otherwise flag, so we do not re-introduce them. Seeded from the
 OpenZeppelin audit "Notes" (N-01..N-04) and expanded with the standard public auditor checklists
@@ -12,11 +14,11 @@ regress anything already enforced.
 ## 1. Solidity style (from the OZ audit notes)
 
 - **Type-safe calldata.** Build calldata with `abi.encodeCall(IFace.fn, (args))`, never
-  `abi.encodeWithSelector` / `abi.encodeWithSignature`. (N-01)
+  `abi.encodeWithSelector` / `abi.encodeWithSignature`. (N-02)
 - **No magic numbers.** Every non-trivial literal (decimals, bps, delays, tolerances, order sizes,
   `1e18`, `10_000`, ...) is a named `constant`. The same literal with two meanings gets two
-  constants and is never collapsed (e.g. max feed decimals `18` vs the `18` fixed-point target). (N-02)
-- **Fixed pragma.** `pragma solidity 0.8.24;`, not `^0.8.24`. (N-03)
+  constants and is never collapsed (e.g. max feed decimals `18` vs the `18` fixed-point target). (N-03)
+- **Fixed pragma.** `pragma solidity 0.8.24;`, not `^0.8.24`. (N-01)
 - **One return convention per function.** Do not mix named returns with an explicit tuple `return`.
   No unused named returns. (N-04)
 - Custom errors over `require` strings. NatSpec on every external function accurate to the code
@@ -34,10 +36,10 @@ regress anything already enforced.
 
 ## 3. Reentrancy & external calls (CEI)
 
-- Checks-Effects-Interactions: update storage BEFORE external calls/transfers. State-changing paths
-  with token transfers carry `nonReentrant`.
+- Checks-Effects-Interactions: update storage BEFORE external calls/transfers. User-facing paths
+  that transfer tokens carry `nonReentrant`.
 - Treat every external call as adversarial (reentrancy, return-bomb, gas griefing). Handle failed
-  transfers gracefully where a revert would brick a batch (use the `_tryTransfer` pattern).
+  transfers gracefully where a revert would brick a batch (use the `tryTransfer` pattern in `SwapRouteLib`).
 - No reliance on `msg.sender` being an EOA; no `tx.origin` for auth.
 - Beware read-only reentrancy: view functions used by others should not return mid-update state.
 
@@ -56,11 +58,12 @@ regress anything already enforced.
 
 - Validate `answer > 0`, `answeredInRound >= roundId`, and freshness
   (`block.timestamp - updatedAt <= maxStaleness`). Reject feeds reporting > 18 decimals at config.
-- Apply the peg band on BOTH directions: inflows (deposit / swap offer / queue settlement) and the
-  upper band on outflows (withdraw / swap wantAsset), so a premium asset cannot be drained.
+- Apply the peg band, both bounds, to inflows: deposit, the offered side of a swap, and queue
+  settlement. Outflows are not price-checked: `withdraw` and `cancelQueue` stay open when a feed is
+  stale or off-peg, and the wanted side of a swap is paid at par whatever its own price.
 - Feed and tolerance are governor-configurable; do not add a permanent "ignore oracle" flag.
-- Consider what happens if the feed is stale or reverts: which user paths get blocked, and is there
-  an alternative exit (e.g. redeem a different basket asset).
+- Consider what happens if the feed is stale or reverts: which user paths get blocked, and which
+  stay open (proportional `withdraw` and `cancelQueue` are never price-checked).
 
 ## 6. ERC-20 / token integration
 
@@ -79,7 +82,7 @@ regress anything already enforced.
 - ERC-7201 namespaced storage, one namespace per module. Grow a namespaced struct by APPENDING at
   the end only. Never reorder or retype existing fields. Slot-guard tests must stay green.
 - `Pool` lives in a `Pool[]` array: its TOTAL size is fixed. New per-pool fields are carved from the
-  `__gap` tail (add field, shrink `__gap` by the same slots). See `local/docs/STORAGE-MANIFEST.md`.
+  `__gap` tail (add field, shrink `__gap` by the same slots).
 - `_authorizeUpgrade` is correctly gated (upgrader) and the new implementation preserves layout.
   Rehearse the full upgrade lifecycle (deploy -> init -> use -> schedule -> execute) on testnet.
 - Do not change existing public/external signatures (integrators are not upgradeable). New behavior
@@ -97,7 +100,7 @@ regress anything already enforced.
 ## 9. Input validation, invariants & misc
 
 - Validate every external input: non-zero addresses, deadlines, pool/asset existence, amount > 0.
-- State a clear, testable invariant per subsystem (e.g. DLRS totalSupply == sum of hub reserves in
+- State a clear, testable invariant per subsystem (e.g. DLRS totalSupply + every spoke's dlrsReserve == sum of hub reserves in
   the fully-backed state) and assert it in the invariant suite.
 - No `selfdestruct`, no `delegatecall` to untrusted targets, no arbitrary external call with
   user-controlled target+calldata.
@@ -106,21 +109,20 @@ regress anything already enforced.
 
 ## 10. Testing, verification & tooling (before "done")
 
-- Add/'update tests for the change: unit + fuzz + invariant where relevant. Do not weaken asserts to
+- Add/update tests for the change: unit + fuzz + invariant where relevant. Do not weaken asserts to
   make something pass; fix the contract for a real bug.
-- Bump `version()` and its assertion.
+- Do not bump `version()` in every change. Bump once per release, before a deploy or upgrade, as
+  described in [VERSIONING.md](VERSIONING.md).
 - **Contract size (EIP-170).** Every deployable contract must stay under the 24576-byte runtime
   limit. Check it locally BEFORE pushing so CI is not the first place it surfaces: run
   `forge build --sizes` (or `forge build --sizes --skip test`) and confirm no `src/` contract is
   over the limit or near it (treat < ~1KB of headroom as a warning). When a contract approaches the
   limit, move cold, rarely-called logic into an external `library` that runs via delegatecall over
-  the same ERC-7201 storage (e.g. `SpokeAdminLib`) rather than trimming behavior or tests; keep the
-  hot swap/deposit/withdraw path inline. Leave headroom for future upgrades.
+  the same ERC-7201 storage (e.g. `SpokeAdminLib`) rather than trimming behavior or tests. Leave headroom for future upgrades.
 - Full suite green, `src/` line coverage >= 90%, Slither with no HIGH (medium/low reported and
   justified). Run `slither . --config-file slither.config.json`.
 - NEVER put secrets (private keys, RPC URLs, API keys) in any tracked file. They live only in the
   gitignored `.env.*`.
-- No AI attribution anywhere (see `CLAUDE.md`).
 
 ## References (public checklists)
 

@@ -1,7 +1,9 @@
 # DollarStore — Contracts
 
-Upgradeable (UUPS) stablecoin protocol: a **hub** pool (USDC/USDT + the DLRS receipt token) with
-directed 1:1 swaps and FIFO queues. Built with [Foundry](https://book.getfoundry.sh/).
+Upgradeable (UUPS) one-for-one stablecoin exchange: a **hub** pool backing the DLRS receipt token,
+**spoke** pools with LP receipt shares, and FIFO queues for swaps that cannot fill immediately. Built
+with [Foundry](https://book.getfoundry.sh/). How the protocol works is in [PROTOCOL.md](../docs/PROTOCOL.md);
+this file covers building, testing, and deploying.
 
 - Solidity **0.8.24**
 - OpenZeppelin **v5.6.x** (contracts + contracts-upgradeable) — **not** v4
@@ -19,7 +21,7 @@ directed 1:1 swaps and FIFO queues. Built with [Foundry](https://book.getfoundry
 ```bash
 curl -L https://foundry.paradigm.xyz | bash
 # then open a new shell OR `source ~/.bashrc` (or ~/.zshenv), then:
-foundryup
+foundryup --install v1.8.3
 ```
 
 Verify: `forge --version`.
@@ -29,18 +31,28 @@ Verify: `forge --version`.
 ### 2. Get the code
 
 ```bash
-git clone --recursive https://github.com/wandering-soupsmith/dollar.git
-cd dollar/contracts
+git clone --recurse-submodules https://github.com/coasify/dollar-store-contracts.git
+cd dollar-store-contracts/contracts
 ```
 
-### 3. Dependencies
+### 3. Install dependencies
 
-OpenZeppelin Contracts `v5.6.1`, OpenZeppelin Contracts Upgradeable `v5.6.1`, and forge-std
-`v1.16.2` are git submodules in `contracts/lib/`, pinned to exact commits. Clone with
-`--recursive`, or fetch them in an existing clone:
+Dependencies are git submodules under `contracts/lib/`, pinned to exact commits: OpenZeppelin
+Contracts `v5.6.1`, OpenZeppelin Contracts Upgradeable `v5.6.1`, and `forge-std` `v1.16.2`.
+
+If you cloned without `--recurse-submodules`:
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init
+```
+
+`forge update` moves the pins; do not run it.
+
+Enable the repository's pre-commit hook, which blocks committing private keys, mnemonics and real
+`.env` files. Git does not enable it on its own; run this once per clone:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ### 4. Build & test
@@ -63,14 +75,14 @@ forge fmt
 
 ### Continuous Integration
 
-CI (build, format check, full test suite, a coverage gate, and Slither static analysis) runs on
-every push to `main` and every PR. See **[CI.md](CI.md)** for the jobs, thresholds (e.g. the
+CI (build, format check, full test suite, a coverage gate, Slither static analysis, and the exit
+probe against the mainnet tokens) runs on every push to `main`, every PR, and once a day. See **[CI.md](../docs/CI.md)** for the jobs, thresholds (e.g. the
 `>= 90%` src coverage gate), and how to run the same checks locally.
 
 ### Security
 
 The trust model, on-chain roles (governor timelock vs guardian Safe), the emergency
-pause-then-fix playbook, and responsible disclosure are documented in **[SECURITY.md](SECURITY.md)**.
+pause-then-fix playbook, and responsible disclosure are documented in **[SECURITY.md](../SECURITY.md)**.
 
 ---
 
@@ -79,13 +91,17 @@ pause-then-fix playbook, and responsible disclosure are documented in **[SECURIT
 ```
 contracts/
 ├── src/
-│   ├── DollarStore.sol            # core (UUPS): roles, hub deposit/withdraw, directed swaps + queues
+│   ├── DollarStore.sol            # core (UUPS): roles, pools, deposit/withdraw, directed swaps + queues
 │   ├── DLRS.sol                   # soulbound 6-decimal receipt token
-│   ├── interfaces/IDollarStore.sol
+│   ├── interfaces/                # IDollarStore.sol, AggregatorV3Interface.sol (Chainlink feed)
 │   ├── storage/                   # ERC-7201 namespaced storage (CoreStorage, RegistryStorage, QueueStorage)
-│   └── libraries/                 # NormalizationLib (decimals), QueueLib (FIFO linked list)
-├── script/                        # Deploy.s.sol (local), DeployGovernance.s.sol (timelocks+Safe), Upgrade.s.sol
-├── test/                          # Foundry tests + mocks
+│   └── libraries/                 # swap engine, queues, spoke lifecycle and admin (see docs/PROTOCOL.md)
+├── script/                        # Deploy.s.sol (local), DeployGovernance.s.sol (timelocks+Safe), CreateSpoke.s.sol,
+│   │                              # Upgrade.s.sol, deploy-docker.sh
+│   └── testnet/                   # testnet-only mock tokens, price feed and their deploy script
+├── lib/                           # pinned dependencies (git submodules)
+├── test/                          # Foundry tests + mocks (map in test/README.md)
+├── deployments/                   # deployed addresses per network
 ├── foundry.toml
 └── remappings.txt
 ```
@@ -93,9 +109,9 @@ contracts/
 ## Deployment
 
 The production deploy (two timelocks + a guardian Safe, wired at genesis) and the governance
-rehearsal are documented step by step in **[DEPLOY.md](DEPLOY.md)**. Roles: `upgrader` (UUPS
+rehearsal are documented step by step in **[DEPLOY.md](../docs/DEPLOY.md)**. Roles: `upgrader` (UUPS
 upgrade authority), `governor` (risk/registry/caps) and `guardian` (fast emergency) — see
-**[SECURITY.md](SECURITY.md)**.
+**[SECURITY.md](../SECURITY.md)**.
 
 ## Notes
 

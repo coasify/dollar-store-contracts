@@ -5,7 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title MockStableERC20 - Faucet-style ERC20 for testnet only
 /// @notice Mock stablecoin used to simulate USDC / USDT on Sepolia. Anyone can mint.
-/// @dev NOT for production. Deliberately isolated under contracts/testnet-mocks/ so it never
+/// @dev NOT for production. Kept under script/testnet/ so it never
 ///      ships with the real protocol source in src/. Decimals are configurable at construction
 ///      to match the underlying asset it simulates (USDC and USDT both use 6 decimals).
 contract MockStableERC20 is ERC20 {

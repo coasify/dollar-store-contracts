@@ -7,15 +7,14 @@ import {MockStableERC20} from "./MockStableERC20.sol";
 
 /// @title DeployMockStables - Deploys the mock stables for testnet (Sepolia)
 /// @notice Deploys faucet ERC20s with public mint, matching the real assets' decimals: USDC and USDT
-///         use 6, USDS uses 18 (real Sky USDS). Hub-and-spoke topology under rehearsal: the hub holds
-///         USDC + USDS (poolId 0), and USDT is listed as the first spoke (poolId >= 1). For testnet
-///         rehearsal only. The USDC/USDT mocks are already on-chain (see DEPLOYMENT.md); set the
+///         use 6, USDS uses 18 (real Sky USDS). Which mock is a hub asset and which is a spoke is decided
+///         at listing time, not here. For testnet rehearsal only. The USDC/USDT mocks are already on-chain (see DEPLOYMENT.md); set the
 ///         DEPLOY_* flags below to redeploy only what is missing (USDS) instead of the whole set.
 /// @dev Env vars:
 ///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key.
-///      - DEPLOY_USDC / DEPLOY_USDT (optional bool, default false): redeploy the hub/spoke mocks that
+///      - DEPLOY_USDC / DEPLOY_USDT (optional bool, default false): redeploy the USDC / USDT mocks that
 ///        already exist. Leave false to reuse the documented addresses.
-///      - DEPLOY_USDS (optional bool, default true): deploy the new hub USDS mock.
+///      - DEPLOY_USDS (optional bool, default true): deploy the USDS mock.
 ///      Run with `--broadcast --verify` to deploy and verify on Etherscan in one shot.
 contract DeployMockStables is Script {
     // Real-asset decimals: USDC and USDT use 6 on Ethereum; Sky USDS uses 18.

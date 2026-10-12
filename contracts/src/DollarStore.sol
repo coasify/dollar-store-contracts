@@ -158,7 +158,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.9.6-U2";
+        return "0.11.0";
     }
 
     // ============ Two-step Role Transfers ============
