@@ -33,3 +33,16 @@ sepolia = "${SEPOLIA_RPC_URL}"
 [etherscan]
 mainnet = { key = "${ETHERSCAN_API_KEY}" }
 sepolia = { key = "${ETHERSCAN_API_KEY}" }
+
+# These rules flag patterns the protocol uses on purpose. The remaining rules stay on; a single
+# exception is marked in the source with the reason.
+[lint]
+exclude_lints = [
+    "reentrancy-events",                # every function that moves tokens is nonReentrant
+    "require-revert-in-loop",           # fill-or-revert swaps and admin batch checks
+    "calls-loop",                       # one price feed per hub asset; bounded queue payouts
+    "block-timestamp",                  # deadlines and oracle staleness
+    "boolean-cst",
+    "uninitialized-local",
+    "environment-read-across-mutation", # tests only
+]

@@ -899,6 +899,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         external
         override
         onlyGuardian
+        // onlyGuardian only compares the caller with storage.
+        // forge-lint: disable-next-line(non-reentrant-not-first)
         nonReentrant
         returns (uint256 removedUnits)
     {

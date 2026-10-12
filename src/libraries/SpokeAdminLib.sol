@@ -51,6 +51,8 @@ library SpokeAdminLib {
 
         uint256 newIndex = r.pools.length;
         if (newIndex > type(uint16).max) revert IDollarStore.MaxPoolsReached();
+        // newIndex <= type(uint16).max is checked above.
+        // forge-lint: disable-next-line(unsafe-typecast)
         poolId = uint16(newIndex);
 
         uint8 dec = IERC20Metadata(spokeAsset).decimals();

@@ -24,6 +24,8 @@ library NormalizationLib {
     /// @return The scaling factor between native units and 6-decimal normalized units.
     function scalingFactor(uint8 decimals_) internal pure returns (uint64) {
         if (decimals_ < MIN_DECIMALS || decimals_ > MAX_DECIMALS) revert UnsupportedDecimals(decimals_);
+        // At most 10 ** (MAX_DECIMALS - BASE_DECIMALS), which fits in uint64.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return uint64(10 ** (uint256(decimals_) - BASE_DECIMALS));
     }
 
@@ -35,6 +37,8 @@ library NormalizationLib {
     ///         any difference `nativeAmount - nativePulled` is sub-unit dust that stays with the user.
     function toUnits(uint256 nativeAmount, uint64 scaling) internal pure returns (uint256 units, uint256 nativePulled) {
         units = nativeAmount / scaling;
+        // Rounds down on purpose: the remainder stays with the user.
+        // forge-lint: disable-next-line(divide-before-multiply)
         nativePulled = units * scaling;
     }
 
