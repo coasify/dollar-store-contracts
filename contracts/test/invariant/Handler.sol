@@ -97,12 +97,11 @@ contract Handler is Test {
         vm.stopPrank();
     }
 
-    function withdraw(uint256 actorSeed, bool useUsdc, uint256 units) external {
+    function withdraw(uint256 actorSeed, uint256 units) external {
         address actor = _actor(actorSeed);
-        MockERC20 t = useUsdc ? usdc : usdt;
         units = bound(units, 0, dlrs.balanceOf(actor));
         vm.startPrank(actor);
-        try store.withdraw(0, address(t), units, type(uint256).max) {} catch {}
+        try store.withdraw(0, units, type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -144,20 +143,11 @@ contract Handler is Test {
         vm.stopPrank();
     }
 
-    function withdrawSpoke(uint256 actorSeed, bool wantHub, bool useUsdc, uint256 shares) external {
-        address actor = _actor(actorSeed);
-        shares = bound(shares, 0, store.getReceiptShares(spokeId, actor));
-        address want = wantHub ? (useUsdc ? address(usdc) : address(usdt)) : address(rlusd);
-        vm.startPrank(actor);
-        try store.withdraw(spokeId, want, shares, type(uint256).max) {} catch {}
-        vm.stopPrank();
-    }
-
-    function redeemSpoke(uint256 actorSeed, uint256 shares) external {
+    function withdrawSpoke(uint256 actorSeed, uint256 shares) external {
         address actor = _actor(actorSeed);
         shares = bound(shares, 0, store.getReceiptShares(spokeId, actor));
         vm.startPrank(actor);
-        try store.redeemSpoke(spokeId, shares, type(uint256).max) {} catch {}
+        try store.withdraw(spokeId, shares, type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -205,7 +195,7 @@ contract Handler is Test {
             uint256 shares = store.getReceiptShares(spokeId, actors[i]);
             if (shares == 0) continue;
             vm.prank(actors[i]);
-            try store.redeemSpoke(spokeId, shares, type(uint256).max) {} catch {}
+            try store.withdraw(spokeId, shares, type(uint256).max) {} catch {}
         }
         vm.prank(governor);
         try store.removePool(spokeId) {

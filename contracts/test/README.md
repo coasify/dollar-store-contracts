@@ -41,7 +41,7 @@ Large linked libraries — tested through the proxy by the integration suites:
 |---|---|---|
 | `libraries/SwapRouteLib.sol` | directed swap engine, FIFO fill/settle, processQueue, cancelQueue, spoke-queue trigger | `HubSwapQueue.t.sol`, `HubSwapFallback.t.sol`, `SpokeSwap.t.sol`, `SpokeQueueTrigger.t.sol`, `RiskControls.t.sol` |
 | `libraries/SpokeAdminLib.sol` | createSpoke, syncReserves, rescueTokens | `SpokeDeposit.t.sol`, `SpokeCapsAndPauses.t.sol`, `AssetRegistry.t.sol` |
-| `libraries/SpokeLifecycleLib.sol` | windDownSpoke, removePool, haircutEscrow, redeemSpoke | `SpokeLifecycle.t.sol`, `SpokeWinddownHaircut.t.sol`, `SpokeWithdraw.t.sol` |
+| `libraries/SpokeLifecycleLib.sol` | windDownSpoke, removePool, haircutEscrow, withdrawHub, withdrawSpoke | `SpokeLifecycle.t.sol`, `SpokeWinddownHaircut.t.sol`, `SpokeWithdraw.t.sol` |
 
 ## Invariants
 

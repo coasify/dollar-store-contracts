@@ -183,63 +183,106 @@ contract HubDepositWithdrawTest is Test {
         vm.stopPrank();
     }
 
-    // ============ withdraw ============
+    // ============ withdraw (proportional across the hub basket) ============
 
     function test_withdraw_burnsDlrsAndReturnsAsset() public {
-        _deposit(alice, usdc, 1_000e6);
+        _deposit(alice, usdc, 1_000e6); // only USDC in the hub, so the slice is 100% USDC
 
         vm.expectEmit(true, true, true, true, address(store));
         emit Withdraw(alice, 0, address(usdc), 400e6, 400e6);
         vm.prank(alice);
-        uint256 out = store.withdraw(0, address(usdc), 400e6, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(0, 400e6, block.timestamp);
 
-        assertEq(out, 400e6, "native out");
+        assertEq(spokeUnits, 0, "hub exit has no spoke leg");
+        assertEq(hubUnits, 400e6, "units paid");
         assertEq(dlrs.balanceOf(alice), 600e6, "DLRS burned");
         assertEq(store.getReserve(0, address(usdc)), 600e6, "reserve reduced");
         assertEq(usdc.balanceOf(alice), 1_000_000e6 - 1_000e6 + 400e6, "tokens returned");
     }
 
     function test_withdraw_18dp_toNative() public {
-        _deposit(alice, dai, 2e18); // 2 DAI -> 2e6 units
+        _deposit(alice, dai, 2e18); // 2 DAI -> 2e6 units; DAI is the only hub reserve
+        uint256 before = dai.balanceOf(alice);
         vm.prank(alice);
-        uint256 out = store.withdraw(0, address(dai), 15e5, block.timestamp); // 1.5 units
-        assertEq(out, 15e17, "1.5 DAI native");
+        (, uint256 hubUnits) = store.withdraw(0, 15e5, block.timestamp); // 1.5 units
+        assertEq(hubUnits, 15e5);
+        assertEq(dai.balanceOf(alice) - before, 15e17, "1.5 DAI native");
         assertEq(store.getReserve(0, address(dai)), 5e5, "0.5 unit left");
     }
 
-    /// @notice DLRS is a claim on the hub basket: deposit one asset, withdraw another.
-    function test_withdraw_crossAsset_basketClaim() public {
+    /// @notice DLRS is a claim on the hub basket: you get your slice of EVERY hub asset, never one of your
+    ///         choosing. Deposit only USDC, and if DAI is also in the hub you leave with some DAI.
+    function test_withdraw_proportionalAcrossBasket() public {
         _deposit(alice, usdc, 1_000e6); // alice: 1000e6 DLRS, USDC reserve 1000e6
         _deposit(bob, dai, 1_000e18); //  bob:   1000e6 DLRS, DAI reserve 1000e6
 
+        uint256 usdcBefore = usdc.balanceOf(alice);
+        uint256 daiBefore = dai.balanceOf(alice);
         vm.prank(alice);
-        uint256 out = store.withdraw(0, address(dai), 500e6, block.timestamp);
+        (, uint256 hubUnits) = store.withdraw(0, 500e6, block.timestamp);
 
-        assertEq(out, 500e18, "alice gets DAI she never deposited");
+        assertEq(hubUnits, 500e6);
+        assertEq(usdc.balanceOf(alice) - usdcBefore, 250e6, "half in USDC");
+        assertEq(dai.balanceOf(alice) - daiBefore, 250e18, "half in DAI she never deposited");
         assertEq(dlrs.balanceOf(alice), 500e6, "alice DLRS down");
-        assertEq(store.getReserve(0, address(dai)), 500e6, "DAI reserve down");
+        assertEq(store.getReserve(0, address(usdc)), 750e6);
+        assertEq(store.getReserve(0, address(dai)), 750e6);
     }
 
-    function test_withdraw_revertsInsufficientReserves() public {
-        _deposit(alice, usdc, 1_000e6); // alice has DLRS, but DAI reserve is 0
+    /// @notice A hub exit cannot be used to pick the strong asset in a run, and cannot be used as an
+    ///         unqueued swap (deposit USDC, take DAI): there is no asset argument to pick with.
+    function test_withdraw_uneven_basket_splitsByReserveWeight() public {
+        _deposit(alice, usdc, 900e6);
+        _deposit(bob, dai, 100e18); // hub: 900 USDC + 100 DAI
+        uint256 usdcBefore = usdc.balanceOf(alice);
+        uint256 daiBefore = dai.balanceOf(alice);
+        vm.prank(alice);
+        store.withdraw(0, 100e6, block.timestamp);
+        assertEq(usdc.balanceOf(alice) - usdcBefore, 90e6, "90% USDC by weight");
+        assertEq(dai.balanceOf(alice) - daiBefore, 10e18, "10% DAI by weight");
+    }
+
+    /// @notice Rounding: floors never over-pay, and the remainder is handed out so units paid == units burned.
+    function test_withdraw_roundingRemainderIsPaidOut() public {
+        _deposit(alice, usdc, 1_000e6);
+        _deposit(bob, dai, 1_000e18); // 50/50 basket
+        uint256 usdcBefore = usdc.balanceOf(alice);
+        uint256 daiBefore = dai.balanceOf(alice);
+        vm.prank(alice);
+        store.withdraw(0, 3, block.timestamp); // 3 units across two assets: 1 + 1 floors, remainder 1
+        uint256 gotUsdc = usdc.balanceOf(alice) - usdcBefore; // 6dp units
+        uint256 gotDai = (dai.balanceOf(alice) - daiBefore) / 1e12; // back to 6dp units
+        assertEq(gotUsdc + gotDai, 3, "all 3 units paid");
+        assertEq(dlrs.totalSupply(), store.getReserve(0, address(usdc)) + store.getReserve(0, address(dai)));
+    }
+
+    /// @notice Only a governance write-down can leave DLRS under-backed; then a withdraw that exceeds the
+    ///         hub's total reserves reverts rather than paying the wrong amount.
+    function test_withdraw_revertsInsufficientReserves_afterWriteDown() public {
+        _deposit(alice, usdc, 1_000e6);
+        usdc.burn(address(store), 600e6); // external loss: 1000 -> 400
+        vm.prank(governor);
+        store.syncReserves(0, address(usdc));
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientReserves.selector, address(dai), uint256(100e6), uint256(0))
+            abi.encodeWithSelector(
+                IDollarStore.InsufficientReserves.selector, address(usdc), uint256(1_000e6), uint256(400e6)
+            )
         );
-        store.withdraw(0, address(dai), 100e6, block.timestamp);
+        store.withdraw(0, 1_000e6, block.timestamp);
     }
 
     function test_withdraw_revertsInsufficientDlrs() public {
         _deposit(bob, usdc, 1_000e6); // reserve exists; alice has no DLRS
         vm.prank(alice);
         vm.expectRevert(); // ERC20InsufficientBalance from DLRS.burn
-        store.withdraw(0, address(usdc), 100e6, block.timestamp);
+        store.withdraw(0, 100e6, block.timestamp);
     }
 
     function test_withdraw_revertsZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(0, address(usdc), 0, block.timestamp);
+        store.withdraw(0, 0, block.timestamp);
     }
 
     /// @notice Withdraw is an exit path: it must keep working while paused.
@@ -249,8 +292,8 @@ contract HubDepositWithdrawTest is Test {
         store.pause();
 
         vm.prank(alice);
-        uint256 out = store.withdraw(0, address(usdc), 1_000e6, block.timestamp);
-        assertEq(out, 1_000e6, "exit works while paused");
+        (, uint256 hubUnits) = store.withdraw(0, 1_000e6, block.timestamp);
+        assertEq(hubUnits, 1_000e6, "exit works while paused");
         assertEq(dlrs.balanceOf(alice), 0, "fully exited");
     }
 
@@ -261,7 +304,7 @@ contract HubDepositWithdrawTest is Test {
         _deposit(alice, usdc, 1_000e6);
         _deposit(bob, dai, 1_000e18);
         vm.prank(alice);
-        store.withdraw(0, address(dai), 300e6, block.timestamp);
+        store.withdraw(0, 300e6, block.timestamp);
 
         uint256 reserveSum = store.getReserve(0, address(usdc)) + store.getReserve(0, address(dai));
         assertEq(dlrs.totalSupply(), reserveSum, "DLRS supply == sum of reserves");

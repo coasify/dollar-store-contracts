@@ -40,6 +40,9 @@ library RegistryStorage {
         bool listed;
         /// @notice Per-asset deposit pause (set by guardian in M5).
         bool depositPaused;
+        /// @notice Skip the zero-value transfer probe on exits for this asset (governor). For tokens whose
+        ///         transfer controls are not exercised by a zero-value transfer, or that reject one.
+        bool probeExempt;
     }
 
     /// @notice A pool (hub or spoke). All fields declared now (array-stored struct, see @dev above).
@@ -52,7 +55,8 @@ library RegistryStorage {
         address[] assets;
         /// @notice DLRS-side reserve internal to a spoke (normalized 6dp). Unused for the hub.
         uint256 dlrsReserve;
-        /// @notice Protected minimum DLRS-side liquidity for a spoke (M6/U2).
+        /// @notice Minimum DLRS-side liquidity a spoke keeps from spoke->hub SWAPS (M6/U2). LP exits are
+        ///         senior to it and may take dlrsReserve below this value.
         uint256 minDlrsReserve;
         /// @notice Temporary launch exposure cap (M6). 0 = no cap.
         uint256 launchCap;

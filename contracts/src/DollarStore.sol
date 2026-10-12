@@ -265,7 +265,13 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         }
 
         r.assetConfig[asset] = RegistryStorage.AssetConfig({
-            poolId: 0, decimals: dec, scalingFactor: sf, priceFeed: priceFeed, listed: true, depositPaused: false
+            poolId: 0,
+            decimals: dec,
+            scalingFactor: sf,
+            priceFeed: priceFeed,
+            listed: true,
+            depositPaused: false,
+            probeExempt: false
         });
         r.pools[0].assets.push(asset);
 
@@ -292,6 +298,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated, spoke-only. The guardian must not change it (it moves market behavior).
+    ///      Bounds swaps only; see IDollarStore.withdraw for why exits are senior to it.
     function setMinDlrsReserve(uint16 poolId, uint256 newMin) external override onlyGovernor {
         RegistryStorage.Pool storage p = _spokePool(poolId);
         uint256 old = p.minDlrsReserve;
@@ -562,135 +569,21 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    /// @dev Exit path: NOT blocked by pause (only by the reentrancy guard), so LPs can always exit.
-    ///      Hub (poolId 0): `units` is DLRS to burn, paid 1:1 in the chosen hub asset. Spoke (poolId
-    ///      >= 1): `units` is receipt SHARES to burn; the LP is paid the pro-rata value in the chosen
-    ///      asset (the spoke asset from its reserve, or a hub asset consuming dlrsReserve). minDlrsReserve
-    ///      does NOT block LP withdrawals - the full dlrsReserve is available to exiting LPs.
-    function withdraw(uint16 poolId, address asset, uint256 units, uint256 deadline)
+    /// @dev Exit path: NOT blocked by pause (only by the reentrancy guard). An exit can still fail if a
+    ///      pool asset will not transfer to the caller, or after a governance write-down.
+    ///      Proportional: the caller receives their share of every asset the pool holds. Hub (poolId 0):
+    ///      `units` is DLRS to burn, paid across hub assets by reserve weight. Spoke (poolId >= 1):
+    ///      `units` is receipt shares to burn, paid across the spoke asset and the spoke's claim on hub
+    ///      dollars. Not gated by minDlrsReserve. Body in SpokeLifecycleLib (delegatecall, same storage,
+    ///      preserves msg.sender); the nonReentrant guard here holds for the whole delegated call.
+    function withdraw(uint16 poolId, uint256 units, uint256 deadline)
         external
         override
         nonReentrant
-        returns (uint256 nativeAmountOut)
+        returns (uint256 spokeUnits, uint256 hubUnits)
     {
-        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
-        if (units == 0) revert ZeroAmount();
-
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig memory cfg = r.assetConfig[asset];
-        if (!cfg.listed) revert AssetNotListed(asset);
-
-        if (poolId == 0) {
-            if (cfg.poolId != 0) revert WrongPool(asset, poolId);
-            return _withdrawHub(r, asset, cfg.scalingFactor, units);
-        }
-
-        // Spoke withdrawal. `_spokePool` does not check pause, so exits stay live while paused.
-        RegistryStorage.Pool storage p = _spokePool(poolId);
-        if (cfg.poolId == poolId) {
-            return _withdrawSpokeAsset(r, p, poolId, asset, cfg.scalingFactor, units);
-        }
-        if (cfg.poolId == 0) {
-            return _withdrawSpokeHubAsset(r, p, poolId, asset, cfg.scalingFactor, units);
-        }
-        revert WrongPool(asset, poolId); // asset belongs to a different spoke
-    }
-
-    /// @dev Hub withdrawal: burn `units` DLRS (a claim on the hub basket) and send the chosen hub
-    ///      asset 1:1 in native units. CEI: effects before the transfer.
-    function _withdrawHub(RegistryStorage.Layout storage r, address asset, uint64 scaling, uint256 units)
-        internal
-        returns (uint256 nativeAmountOut)
-    {
-        uint256 available = r.reserves[0][asset];
-        if (available < units) revert InsufficientReserves(asset, units, available);
-
-        DLRS(CoreStorage.layout().dlrs).burn(msg.sender, units);
-        r.reserves[0][asset] = available - units;
-
-        nativeAmountOut = NormalizationLib.toNative(units, scaling);
-        IERC20(asset).safeTransfer(msg.sender, nativeAmountOut);
-        emit Withdraw(msg.sender, 0, asset, units, nativeAmountOut);
-    }
-
-    /// @dev Spoke LP exit paid in the spoke asset: burn `shares`, pay the pro-rata value from the
-    ///      spoke's own reserve. Reverts if that reserve cannot cover the value.
-    function _withdrawSpokeAsset(
-        RegistryStorage.Layout storage r,
-        RegistryStorage.Pool storage p,
-        uint16 poolId,
-        address asset,
-        uint64 scaling,
-        uint256 shares
-    ) internal returns (uint256 nativeAmountOut) {
-        uint256 ownerShares = r.receiptShares[poolId][msg.sender];
-        if (ownerShares < shares) revert InsufficientReceiptShares(shares, ownerShares);
-
-        uint256 total = r.receiptTotalShares[poolId];
-        uint256 available = r.reserves[poolId][asset];
-        uint256 value = SpokeShareLib.valueForShares(shares, available + p.dlrsReserve, total);
-        if (value == 0) revert ZeroAmount();
-        if (value > available) revert InsufficientReserves(asset, value, available);
-
-        // Effects before interaction (CEI).
-        r.receiptShares[poolId][msg.sender] = ownerShares - shares;
-        r.receiptTotalShares[poolId] = total - shares;
-        r.reserves[poolId][asset] = available - value;
-
-        nativeAmountOut = NormalizationLib.toNative(value, scaling);
-        IERC20(asset).safeTransfer(msg.sender, nativeAmountOut);
-        emit SpokeLiquidityRemoved(poolId, msg.sender, asset, shares, value, nativeAmountOut);
-    }
-
-    /// @dev Spoke LP exit paid in a hub asset: burn `shares`, consume the pro-rata value from the
-    ///      spoke's dlrsReserve and pay it out of hub reserves. Bounded by min(dlrsReserve, hub
-    ///      reserve of that asset). minDlrsReserve does NOT gate this (exits are always live).
-    function _withdrawSpokeHubAsset(
-        RegistryStorage.Layout storage r,
-        RegistryStorage.Pool storage p,
-        uint16 poolId,
-        address hubAsset,
-        uint64 scaling,
-        uint256 shares
-    ) internal returns (uint256 nativeAmountOut) {
-        uint256 ownerShares = r.receiptShares[poolId][msg.sender];
-        if (ownerShares < shares) revert InsufficientReceiptShares(shares, ownerShares);
-
-        uint256 total = r.receiptTotalShares[poolId];
-        uint256 spokeReserve = r.reserves[poolId][p.assets[0]];
-        uint256 value = SpokeShareLib.valueForShares(shares, spokeReserve + p.dlrsReserve, total);
-        if (value == 0) revert ZeroAmount();
-
-        uint256 dlrsAvail = p.dlrsReserve;
-        uint256 hubAvail = r.reserves[0][hubAsset];
-        uint256 available = dlrsAvail < hubAvail ? dlrsAvail : hubAvail;
-        if (value > available) revert InsufficientReserves(hubAsset, value, available);
-
-        // Effects before interaction (CEI): burn shares, drop dlrsReserve and hub reserve together.
-        r.receiptShares[poolId][msg.sender] = ownerShares - shares;
-        r.receiptTotalShares[poolId] = total - shares;
-        p.dlrsReserve = dlrsAvail - value;
-        r.reserves[0][hubAsset] = hubAvail - value;
-
-        nativeAmountOut = NormalizationLib.toNative(value, scaling);
-        IERC20(hubAsset).safeTransfer(msg.sender, nativeAmountOut);
-        emit SpokeLiquidityRemoved(poolId, msg.sender, hubAsset, shares, value, nativeAmountOut);
-    }
-
-    /// @inheritdoc IDollarStore
-    /// @dev Proportional exit across BOTH sides of the spoke, so an LP never gets stuck on rounding
-    ///      dust (the single-asset `withdraw` can leave a sliver on one side that neither reserve can
-    ///      cover alone). Exit path: not blocked by pause (only the reentrancy guard), not gated by
-    ///      minDlrsReserve. Body in SpokeLifecycleLib (delegatecall, same storage, preserves msg.sender)
-    ///      so this implementation stays under the EIP-170 runtime size limit; the nonReentrant guard
-    ///      here holds for the whole delegated call.
-    function redeemSpoke(uint16 poolId, uint256 shares, uint256 deadline)
-        external
-        override
-        nonReentrant
-        returns (uint256 spokeUnits, uint256 dlrsUnits)
-    {
-        return SpokeLifecycleLib.redeemSpoke(poolId, shares, deadline);
+        if (poolId == 0) return (0, SpokeLifecycleLib.withdrawHub(units, deadline));
+        return SpokeLifecycleLib.withdrawSpoke(poolId, units, deadline);
     }
 
     // ============ Directed Swaps & Queues (M4) ============
@@ -862,6 +755,19 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (!cfg.listed) revert AssetNotListed(asset);
         cfg.priceFeed = feed;
         emit PriceFeedUpdated(asset, feed);
+    }
+
+    /// @inheritdoc IDollarStore
+    function setProbeExempt(address asset, bool exempt) external override onlyGovernor {
+        RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
+        if (!cfg.listed) revert AssetNotListed(asset);
+        cfg.probeExempt = exempt;
+        emit ProbeExemptSet(asset, exempt);
+    }
+
+    /// @inheritdoc IDollarStore
+    function isProbeExempt(address asset) external view override returns (bool) {
+        return RegistryStorage.layout().assetConfig[asset].probeExempt;
     }
 
     /// @inheritdoc IDollarStore

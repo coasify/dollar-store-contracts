@@ -8,8 +8,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IDollarStore} from "../interfaces/IDollarStore.sol";
 import {RegistryStorage} from "../storage/RegistryStorage.sol";
 import {QueueStorage} from "../storage/QueueStorage.sol";
+import {CoreStorage} from "../storage/CoreStorage.sol";
 import {QueueLib} from "./QueueLib.sol";
 import {NormalizationLib} from "./NormalizationLib.sol";
+import {DLRS} from "../DLRS.sol";
 
 /// @title SpokeLifecycleLib - spoke wind-down / impairment / removal / redeem logic.
 /// @notice Holds the spoke wind-down, escrow-impairment haircut, pool-removal and proportional-redeem
@@ -29,8 +31,11 @@ library SpokeLifecycleLib {
     event PoolRemoved(uint16 indexed poolId);
     event SpokeWindDownStarted(uint16 indexed poolId);
     event EscrowHaircut(address indexed asset, uint16 indexed poolId, uint256 oldEscrow, uint256 newEscrow);
-    event SpokeRedeemed(
-        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 dlrsUnits
+    event SpokeWithdrawn(
+        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 hubUnits
+    );
+    event Withdraw(
+        address indexed user, uint16 indexed poolId, address indexed asset, uint256 units, uint256 nativeAmount
     );
 
     /// @dev Returns the spoke pool at `poolId`, reverting InvalidPool if it does not exist and
@@ -160,10 +165,26 @@ library SpokeLifecycleLib {
         return budget;
     }
 
-    /// @notice Proportional spoke redemption across both sides (see IDollarStore.redeemSpoke).
-    function redeemSpoke(uint16 poolId, uint256 shares, uint256 deadline)
+    // ============ Proportional exits (hub and spoke) ============
+
+    /// @notice Hub exit: burn `units` DLRS and receive the caller's proportional slice of every hub asset.
+    function withdrawHub(uint256 units, uint256 deadline) external returns (uint256 hubUnits) {
+        if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
+        if (units == 0) revert IDollarStore.ZeroAmount();
+
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        // Effects before interaction: burn first (reverts on insufficient DLRS), then pay out.
+        DLRS(CoreStorage.layout().dlrs).burn(msg.sender, units);
+        _payHubProRata(r, msg.sender, units, r.pools[0].assets[0]);
+        hubUnits = units;
+    }
+
+    /// @notice Spoke exit: burn `shares` and receive the caller's proportional slice of the spoke asset
+    ///         and of the spoke's claim on hub dollars, the latter split across hub assets by reserve
+    ///         weight. Burning the last shares drains both sides to exactly zero.
+    function withdrawSpoke(uint16 poolId, uint256 shares, uint256 deadline)
         external
-        returns (uint256 spokeUnits, uint256 dlrsUnits)
+        returns (uint256 spokeUnits, uint256 hubUnits)
     {
         if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
         if (shares == 0) revert IDollarStore.ZeroAmount();
@@ -177,10 +198,25 @@ library SpokeLifecycleLib {
         uint256 total = r.receiptTotalShares[poolId];
         address spokeAsset = p.assets[0];
         uint256 spokeReserve = r.reserves[poolId][spokeAsset];
+        uint256 hubClaim = p.dlrsReserve;
 
-        spokeUnits = Math.mulDiv(shares, spokeReserve, total); // floor, pro-rata
-        dlrsUnits = Math.mulDiv(shares, p.dlrsReserve, total); // floor, pro-rata
-        if (spokeUnits == 0 && dlrsUnits == 0) revert IDollarStore.ZeroAmount();
+        // Floor ONCE on total value, then split by side, so a position worth at least one unit always
+        // pays at least one unit (flooring each side separately could round both legs to zero and strand
+        // dust that no exit could ever clear).
+        uint256 poolValue = spokeReserve + hubClaim;
+        uint256 value = Math.mulDiv(shares, poolValue, total);
+        if (value == 0) revert IDollarStore.ZeroAmount();
+        spokeUnits = Math.mulDiv(value, spokeReserve, poolValue);
+        hubUnits = value - spokeUnits;
+        if (hubUnits > hubClaim) {
+            // Rounding pushed the hub leg past the claim; the spoke side always has room for the excess.
+            spokeUnits += hubUnits - hubClaim;
+            hubUnits = hubClaim;
+        }
+
+        // Legs that pay nothing are probed; legs that pay are checked by their own transfer.
+        if (spokeUnits == 0) _probeIssuer(spokeAsset, msg.sender);
+        if (hubUnits == 0) _probeAllHub(r, msg.sender);
 
         r.receiptShares[poolId][msg.sender] = ownerShares - shares;
         r.receiptTotalShares[poolId] = total - shares;
@@ -192,23 +228,75 @@ library SpokeLifecycleLib {
                     msg.sender, NormalizationLib.toNative(spokeUnits, r.assetConfig[spokeAsset].scalingFactor)
                 );
         }
-
-        if (dlrsUnits > 0) {
-            p.dlrsReserve -= dlrsUnits;
-            uint256 remaining = dlrsUnits;
-            address[] storage hubAssets = r.pools[0].assets;
-            for (uint256 i; i < hubAssets.length && remaining > 0; ++i) {
-                address h = hubAssets[i];
-                uint256 hr = r.reserves[0][h];
-                if (hr == 0) continue;
-                uint256 pay = remaining < hr ? remaining : hr;
-                r.reserves[0][h] = hr - pay;
-                remaining -= pay;
-                IERC20(h).safeTransfer(msg.sender, NormalizationLib.toNative(pay, r.assetConfig[h].scalingFactor));
-            }
-            if (remaining != 0) revert IDollarStore.InsufficientReserves(spokeAsset, dlrsUnits, dlrsUnits - remaining);
+        if (hubUnits > 0) {
+            p.dlrsReserve -= hubUnits;
+            _payHubProRata(r, msg.sender, hubUnits, spokeAsset);
         }
 
-        emit SpokeRedeemed(poolId, msg.sender, shares, spokeUnits, dlrsUnits);
+        emit SpokeWithdrawn(poolId, msg.sender, shares, spokeUnits, hubUnits);
+    }
+
+    /// @dev Pay `units` of hub dollars to `to`, split across every hub asset in proportion to the hub's
+    ///      reserves of it (floor per asset, rounding remainder distributed one unit at a time to assets
+    ///      with spare reserve). Reverts if the hub's total reserves cannot cover `units`, which can only
+    ///      happen after a governance write-down (`syncReserves`). `errAsset` names the pool in the error.
+    function _payHubProRata(RegistryStorage.Layout storage r, address to, uint256 units, address errAsset) private {
+        address[] storage hubAssets = r.pools[0].assets;
+        uint256 n = hubAssets.length;
+        uint256 total;
+        for (uint256 i; i < n; ++i) {
+            total += r.reserves[0][hubAssets[i]];
+        }
+        if (total < units) revert IDollarStore.InsufficientReserves(errAsset, units, total);
+
+        uint256[] memory pay = new uint256[](n);
+        uint256 paid;
+        for (uint256 i; i < n; ++i) {
+            pay[i] = Math.mulDiv(units, r.reserves[0][hubAssets[i]], total); // floor
+            paid += pay[i];
+        }
+        // Floors lose at most one unit per asset; hand the remainder out where there is spare reserve.
+        uint256 remainder = units - paid;
+        for (uint256 i; remainder > 0; i = (i + 1) % n) {
+            if (r.reserves[0][hubAssets[i]] > pay[i]) {
+                pay[i] += 1;
+                remainder -= 1;
+            }
+        }
+
+        // Probe hub assets this exit does not pay.
+        for (uint256 i; i < n; ++i) {
+            if (pay[i] == 0) _probeIssuer(hubAssets[i], to);
+        }
+
+        for (uint256 i; i < n; ++i) {
+            if (pay[i] == 0) continue;
+            address h = hubAssets[i];
+            r.reserves[0][h] -= pay[i];
+            uint256 native = NormalizationLib.toNative(pay[i], r.assetConfig[h].scalingFactor);
+            IERC20(h).safeTransfer(to, native);
+            emit Withdraw(to, 0, h, pay[i], native);
+        }
+    }
+
+    // ============ Issuer probe ============
+
+    /// @dev Zero-value transfer probe: reverts if `asset` would not deliver to `wallet`. Answers as a real
+    ///      payout would for tokens that apply their transfer controls before checking the amount; it does
+    ///      not see a control that short-circuits zero-value transfers. Governance can exempt an asset
+    ///      (setProbeExempt) if its token behaves that way or rejects zero-value transfers outright.
+    function _probeIssuer(address asset, address wallet) private {
+        if (RegistryStorage.layout().assetConfig[asset].probeExempt) return;
+        (bool ok, bytes memory data) = asset.call(abi.encodeCall(IERC20.transfer, (wallet, 0)));
+        bool delivered = ok && (data.length == 0 || abi.decode(data, (bool)));
+        if (!delivered) revert IDollarStore.ExitBlockedByIssuer(asset, wallet);
+    }
+
+    /// @dev Probe every hub asset (a spoke exit whose hub leg is zero pays none of them).
+    function _probeAllHub(RegistryStorage.Layout storage r, address wallet) private {
+        address[] storage hubAssets = r.pools[0].assets;
+        for (uint256 i; i < hubAssets.length; ++i) {
+            _probeIssuer(hubAssets[i], wallet);
+        }
     }
 }

@@ -95,6 +95,36 @@ deployment temporarily assigns a role to an EOA, that role **must** be handed of
 to the Timelock / Safe (two-step `transfer*` + `accept*`) and the temporary key
 retired **before the first deposit**.
 
+## Exit probe and issuer transfer controls
+
+Exits are proportional: a holder receives their slice of every asset the pool holds. A leg that pays
+is checked by the token's own transfer, which reverts if the issuer has frozen the recipient. A leg
+that pays nothing, because the pool holds none of that asset at the time, is probed with a zero-value
+`transfer` from the contract to the caller, so the issuer of an asset the pool is backed by is still
+consulted. The probe relies on the token applying its transfer controls before checking the amount.
+
+Per listed token, verified against the mainnet contracts by `test/fork/IssuerProbeFork.t.sol`:
+
+| Token | Restricts recipients | Zero-value transfer runs the control | Probe useful |
+|---|---|---|---|
+| USDC | yes | yes | yes |
+| USDT | no (senders only) | n/a | consistent: a real payout to a frozen wallet also succeeds |
+| PYUSD | yes | yes | yes |
+| USDG | yes | yes | yes |
+| RLUSD | yes (account pause) | yes | yes |
+| USDS | no freeze exists | n/a | always passes |
+
+The probe is a recipient check. A token whose freeze restricts senders only, as USDT's does, is not
+covered: a frozen wallet can still receive it, so the probe passes and a payout in any asset goes
+through. USDT is not on the launch list. **Listing precondition:** do not list a token with a
+sender-only freeze without first adding an issuer-query adapter (for example calling the token's
+`isBlackListed(address)` view) alongside the probe.
+
+Governance can exempt an asset from the probe (`setProbeExempt`). Exempting disables the issuer check
+for exits that pay none of that asset; real transfers still run the token's controls. Use it only if a
+token starts rejecting zero-value transfers (which would block such exits for everyone) or stops
+applying its controls to them. The daily `fork-probe` CI job is the monitor for either change.
+
 ## Emergency playbook (pause-then-fix)
 
 Because the dangerous knobs live behind the timelock, incidents are handled in

@@ -46,13 +46,9 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         vm.stopPrank();
         vm.startPrank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.redeemSpoke(spoke, CAPITAL, block.timestamp);
+        store.withdraw(spoke, CAPITAL, block.timestamp);
         vm.expectPartialRevert(IDollarStore.InsufficientReceiptShares.selector);
-        store.redeemSpoke(fresh, 1, block.timestamp);
-        vm.expectPartialRevert(IDollarStore.WrongPool.selector);
-        store.withdraw(spoke, address(rlusd), CAPITAL, block.timestamp);
-        vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(spoke, address(usdc), CAPITAL, block.timestamp);
+        store.withdraw(fresh, 1, block.timestamp);
         vm.expectPartialRevert(IDollarStore.PoolPaused.selector);
         store.deposit(spoke, address(rlusd), units * SCALE, block.timestamp);
         vm.expectPartialRevert(IDollarStore.PoolPaused.selector);
@@ -73,7 +69,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         assertEq(store.getReserve(spoke, address(rlusd)), 0);
         assertEq(store.getReceiptShares(fresh, alice), 0);
         vm.prank(bob);
-        (uint256 payout, uint256 hubPayout) = store.redeemSpoke(fresh, units, block.timestamp);
+        (uint256 payout, uint256 hubPayout) = store.withdraw(fresh, units, block.timestamp);
         assertEq(payout, units);
         assertEq(hubPayout, 0);
     }

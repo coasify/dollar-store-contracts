@@ -169,8 +169,8 @@ contract SpokeCapsAndPausesTest is Test {
         store.pausePool(spoke);
 
         vm.prank(alice);
-        uint256 out = store.withdraw(spoke, address(rlusd), 1_000e6, block.timestamp);
-        assertEq(out, 1_000e18, "LP can exit a paused spoke");
+        (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        assertEq(spokeUnits, 1_000e6, "LP can exit a paused spoke");
     }
 
     function test_pausePool_leavesCancelLive() public {

@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 interface IReentryTarget {
-    function withdraw(uint16 poolId, address asset, uint256 units, uint256 deadline) external returns (uint256);
+    function withdraw(uint16 poolId, uint256 units, uint256 deadline) external returns (uint256, uint256);
 }
 
 /// @notice Malicious ERC20 that reenters the DollarStore on an outbound payout transfer.
@@ -38,7 +38,7 @@ contract MockReentrantERC20 is ERC20 {
         super._update(from, to, value);
         if (attack && store != address(0) && from == store && to != store) {
             attack = false; // one shot; the reentrant call reverts on the guard
-            IReentryTarget(store).withdraw(0, address(this), 1, block.timestamp);
+            IReentryTarget(store).withdraw(0, 1, block.timestamp);
         }
     }
 }
