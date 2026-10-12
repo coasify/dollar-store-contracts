@@ -21,8 +21,7 @@ import {PegLib} from "./PegLib.sol";
 ///         ERC-7201 slots) and msg.sender / block.timestamp are preserved. This is the accepted cost
 ///         of fitting everything in one implementation (~1 delegatecall per swap).
 /// @dev Access gating (nonReentrant / whenNotPaused / owner checks) stays on the DollarStore wrappers
-///      and runs BEFORE delegating here. The internal helpers are shared with DollarStore's inline
-///      views (getSwapQuote) via direct `SwapRouteLib.<fn>` calls, which inline (no delegatecall).
+///      and runs BEFORE delegating here.
 /// @custom:security-contact admin@dollarstore.world
 library SwapRouteLib {
     using SafeERC20 for IERC20;
@@ -140,6 +139,33 @@ library SwapRouteLib {
         emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, filled, 0);
     }
 
+    /// @notice Instantly fillable amount for a swap, in native units of `wantAsset`
+    ///         (see IDollarStore.getSwapQuote). Follows fillDirected's order assuming every payout
+    ///         succeeds, and returns 0 where the swap's route or inflow checks would revert.
+    function quote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256) {
+        (bool valid, Route memory route) = classifyRoute(offerAsset, wantAsset);
+        if (!valid || !PegLib.canInflow(offerAsset)) return 0;
+        uint256 units = amount / route.offerScaling;
+        if (units == 0) return 0;
+
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+        uint256 filled = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset, route.spokePoolId)].totalDepth;
+        if (filled >= units) return NormalizationLib.toNative(units, route.wantScaling);
+
+        // Earlier same-direction positions are settled from reserves first, up to MAX_INLINE_SETTLE of
+        // them; the swap reaches reserves only if that clears the line.
+        uint256 available = wantReserveAvailable(route, wantAsset);
+        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, route.spokePoolId)].head;
+        for (uint256 n; current != 0 && n < MAX_INLINE_SETTLE; ++n) {
+            uint256 posAmt = qs.positions[current].offerAmount;
+            if (posAmt > available) break;
+            available -= posAmt;
+            current = qs.positions[current].next;
+        }
+        if (current == 0) filled += available;
+        return NormalizationLib.toNative(filled < units ? filled : units, route.wantScaling);
+    }
+
     /// @notice Settle the (offerAsset -> wantAsset) queue from reserves in FIFO order, bounded by
     ///         `maxPositions` (see IDollarStore.processQueue).
     function processQueue(address offerAsset, address wantAsset, uint256 maxPositions)
@@ -242,8 +268,9 @@ library SwapRouteLib {
         }
     }
 
-    /// @dev Non-reverting route classification for views (getSwapQuote). Returns valid == false for any
-    ///      unsupported route (same-asset, unlisted, spoke->spoke, or a paused spoke).
+    /// @dev Non-reverting route classification for quote. Returns valid == false for any
+    ///      unsupported route (same-asset, unlisted, spoke->spoke, a paused spoke, or spoke->hub while
+    ///      the spoke is winding down).
     function classifyRoute(address offerAsset, address wantAsset)
         internal
         view

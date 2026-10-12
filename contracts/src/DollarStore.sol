@@ -686,23 +686,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         override
         returns (uint256)
     {
-        (bool valid, SwapRouteLib.Route memory route) = SwapRouteLib.classifyRoute(offerAsset, wantAsset);
-        if (!valid) return 0;
-
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-        // FIFO availability: a non-empty same-direction queue owns all instant liquidity.
-        if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, route.spokePoolId)].positionCount != 0) {
-            return 0;
-        }
-
-        uint256 units = amount / route.offerScaling;
-        if (units == 0) return 0;
-
-        // Instant liquidity = opposite-queue escrow (peer matches) + route-aware protocol reserves.
-        uint256 avail = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset, route.spokePoolId)].totalDepth
-            + SwapRouteLib.wantReserveAvailable(route, wantAsset);
-        uint256 fillable = units <= avail ? units : avail;
-        return NormalizationLib.toNative(fillable, route.wantScaling);
+        if (paused()) return 0;
+        return SwapRouteLib.quote(offerAsset, wantAsset, amount);
     }
 
     /// @dev The line a directed pair currently uses, for the pair-based views. `wantAsset == 0` is the
