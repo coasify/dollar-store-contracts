@@ -14,7 +14,7 @@ behind timelocks; only the fast fail-safe brakes are instant.
 |---|---|---|---|
 | **Upgrader** | TimelockController, long delay (proposed by a Safe) | Delayed (long timelock) | Replace the implementation (UUPS upgrade) |
 | **Governor** | TimelockController, short delay (proposed by a Safe) | Delayed (short timelock) | List assets, raise caps, oracle/risk params, reserve markdown, token rescue, role transfers |
-| **Guardian** | Safe multisig (3-of-5) | Instant | Pause / unpause, cancel queue positions, tighten caps |
+| **Guardian** | Safe multisig (3-of-5) | Instant | Pause / unpause, tighten caps |
 | **Deployer** | Deploy account | One-time | Deploy + initialize, then hands off. Holds no lasting power |
 
 Each role has its own two-step transfer (`transfer*` + `accept*`), so a handoff
@@ -73,7 +73,6 @@ Guardian-gated functions:
 - `pause` / `unpause` (global)
 - `pauseDeposits` / `unpauseDeposits` (per asset)
 - `pausePool` / `unpausePool`
-- `adminCancelQueue` (force-cancel a queue position, returning escrow to its owner)
 - `lowerLaunchCap` (tighten a cap; can never loosen or remove it)
 
 Rationale: the worst thing a compromised guardian can do is stop or slow the

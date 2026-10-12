@@ -147,7 +147,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.9.3-U2";
+        return "0.9.4-U2";
     }
 
     // ============ Two-step Role Transfers ============
@@ -889,12 +889,6 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         returns (uint256 removedUnits)
     {
         return SpokeLifecycleLib.haircutEscrow(asset, maxPositions);
-    }
-
-    /// @inheritdoc IDollarStore
-    function adminCancelQueue(uint256 positionId) external override nonReentrant onlyGuardian {
-        if (QueueStorage.layout().positions[positionId].owner == address(0)) revert QueuePositionNotFound(positionId);
-        SwapRouteLib.cancelPosition(positionId);
     }
 
     // ============ Risk Views ============

@@ -11,18 +11,25 @@ Contents:
 
 - `MockStableERC20.sol` - ERC20 with a public `mint` (faucet: anyone can mint) and configurable
   decimals.
-- `DeployMockStables.s.sol` - deploys two instances simulating USDC and USDT.
+- `DeployMockStables.s.sol` - deploys the mocks simulating USDC, USDT and USDS. Each token is gated by
+  a `DEPLOY_USDC` / `DEPLOY_USDT` / `DEPLOY_USDS` env flag so already-deployed mocks are not redeployed
+  (defaults: only USDS on, USDC/USDT off).
 
 ## Decimals
 
-Real USDC and USDT use **6 decimals** on Ethereum. Both mocks are deployed with 6.
+Real USDC and USDT use **6 decimals** on Ethereum; Sky USDS uses **18**. The mocks match: USDC/USDT
+deployed with 6, USDS with 18.
 
-## Deployed on Sepolia (2026-07-10)
+## Deployed on Sepolia
 
-| Token | Address | Decimals |
-|---|---|---|
-| Mock USDC | `0x0a9479f7aff770965b3b2D28b29E40C3F6168588` | 6 |
-| Mock USDT | `0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05` | 6 |
+| Token | Address | Decimals | Deployed |
+|---|---|---|---|
+| Mock USDC | `0x0a9479f7aff770965b3b2D28b29E40C3F6168588` | 6 | 2026-07-10 |
+| Mock USDT | `0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05` | 6 | 2026-07-10 |
+| Mock USDS | `0xdB82d075db6c2e30353825D78C21F472C2252D25` | 18 | 2026-08-20 |
+
+Topology under rehearsal: the hub (poolId 0) holds **USDC + USDS**; **USDT** is listed as the first
+spoke (poolId >= 1).
 
 ## Deploy + verify (Sepolia)
 

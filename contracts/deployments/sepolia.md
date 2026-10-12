@@ -1,32 +1,49 @@
 # Deployment - Sepolia
 
 **Network:** Sepolia (chain id 11155111)
-**Date:** 2026-07-11
-**Block:** 11250015
-**Script:** `script/DeployGovernance.s.sol:DeployGovernance`
-**Total gas paid:** ~0.11 ETH (including verification costs)
+**Date:** 2026-08-28
+**Block:** 11620056
+**Script:** `script/DeployGovernance.s.sol:DeployGovernance` (via `script/deploy-docker.sh`)
+**Total gas paid:** ~0.024 ETH (deploy) + config/seed txs
 **Topology:** one shared Safe for the three roles; short delays for rehearsal (`bytecode_hash = "none"`).
+**Version:** `0.9.4-U2`
 
-> Supersedes the earlier Sepolia deploys (block 11244019 and 11243952). Those addresses are deprecated.
-> This deployment was executed inside a Linux Docker container to solve the `via_ir` compilation non-determinism issue between macOS and Etherscan's Linux verifier.
+> Supersedes the Sepolia deploy at proxy `0x6794C624A83bcff87aC4efecdEdB2b2D3445445B` (block 11531648)
+> and every deploy before it. **Those addresses are deprecated.**
+> Reason for the redeploy: `adminCancelQueue` was removed from the protocol (version `0.9.3-U2` ->
+> `0.9.4-U2`). A fresh proxy was chosen over an in-place upgrade.
+>
+> Deployed inside a Linux Docker container (`ghcr.io/foundry-rs/foundry:latest`) after `forge clean`,
+> so the container recompiled from source in Linux and the bytecode matches Etherscan's verifier.
 
 ## Addresses
 
 | Contract | Address | Verified | Explorer |
 |---|---|---|---|
-| **DollarStore proxy** (interact here) | `0x63d7EF051285c14FF54311cdd4Dc246DeD402097` | **yes** | [link](https://sepolia.etherscan.io/address/0x63d7EF051285c14FF54311cdd4Dc246DeD402097) |
-| DollarStore implementation | `0x2c5DbDCc7A7AdDE59Cd085F195015432803E1467` | **yes** | [link](https://sepolia.etherscan.io/address/0x2c5DbDCc7A7AdDE59Cd085F195015432803E1467) |
-| DLRS token | `0xaD694EC07cCF1e2ABE8D604609c59b095DB0aAaC` | **yes** | [link](https://sepolia.etherscan.io/address/0xaD694EC07cCF1e2ABE8D604609c59b095DB0aAaC) |
-| Upgrader timelock | `0x35889DdA205122726a2267aDa0Acfd2ad281e137` | **yes** | [link](https://sepolia.etherscan.io/address/0x35889DdA205122726a2267aDa0Acfd2ad281e137) |
-| Governor timelock | `0x18B486A50E935F689bEb4F2d83628b9110B2B3Ba` | **yes** | [link](https://sepolia.etherscan.io/address/0x18B486A50E935F689bEb4F2d83628b9110B2B3Ba) |
+| **DollarStore proxy** (interact here) | `0xf10659961CE8c551F603370bd2f7694f60B3bC4d` | **yes** | [link](https://sepolia.etherscan.io/address/0xf10659961CE8c551F603370bd2f7694f60B3bC4d) |
+| DollarStore implementation | `0x3abbf9e694237d8ecad493070ca5704a658acf36` | **yes** | [link](https://sepolia.etherscan.io/address/0x3abbf9e694237d8ecad493070ca5704a658acf36) |
+| DLRS token | `0x9C7cEe1B5bdA96024F4860d1533f746492fa89a6` | **yes** | [link](https://sepolia.etherscan.io/address/0x9C7cEe1B5bdA96024F4860d1533f746492fa89a6) |
+| Upgrader timelock | `0xaef68b233aD1F959108ca43C35458c2A4FE8F177` | **yes** | [link](https://sepolia.etherscan.io/address/0xaef68b233aD1F959108ca43C35458c2A4FE8F177) |
+| Governor timelock | `0xf38DC70449f5FD807983b7654FEC909e223F6688` | **yes** | [link](https://sepolia.etherscan.io/address/0xf38DC70449f5FD807983b7654FEC909e223F6688) |
 | Guardian / Governor / Upgrader Safe (shared) | `0x19caCb4c0A7fC25598CC44564ED0eCA01249fc31` | Safe (EOA) | [link](https://sepolia.etherscan.io/address/0x19caCb4c0A7fC25598CC44564ED0eCA01249fc31) |
+
+### Linked libraries (reused from the prior deploy, unchanged bytecode)
+
+The libraries were not changed by the `adminCancelQueue` removal, so CREATE2 resolved them to their
+existing, already-verified addresses and they were not redeployed.
+
+| Library | Address | Verified |
+|---|---|---|
+| SpokeAdminLib | `0x982aa6fe12a25cd8a6189c8ee2bda17071e74a93` | yes |
+| SwapRouteLib | `0x481bd4fba3f343f339ee68df96b056ac85283929` | yes |
+| SpokeLifecycleLib | `0x835d25336c77ec5fbdb64a28f8b72151b9c103d5` | yes |
 
 ## Role wiring (on the proxy)
 
 | Role | Held by | Delay |
 |---|---|---|
-| `upgrader` | Upgrader timelock `0x35889DdA205122726a2267aDa0Acfd2ad281e137` | 3600s (1h) |
-| `governor` | Governor timelock `0x18B486A50E935F689bEb4F2d83628b9110B2B3Ba` | 600s (10m) |
+| `upgrader` | Upgrader timelock `0xaef68b233aD1F959108ca43C35458c2A4FE8F177` | 3600s (1h) |
+| `governor` | Governor timelock `0xf38DC70449f5FD807983b7654FEC909e223F6688` | 600s (10m) |
 | `guardian` | Safe `0x19caCb4c0A7fC25598CC44564ED0eCA01249fc31` (direct, no timelock) | - |
 
 Both timelocks are proposed/cancelled by the same Safe/EOA `0x19caCb4c0A7fC25598CC44564ED0eCA01249fc31`; execution is open; no external admin.
@@ -35,88 +52,99 @@ Both timelocks are proposed/cancelled by the same Safe/EOA `0x19caCb4c0A7fC25598
 
 | What | Tx hash |
 |---|---|
-| Upgrader timelock | `0x425eae6c3cb9e4128d7a884877eaae02699c6aa301039baa5f4d6808198dbd63` |
-| Governor timelock | `0xe70d3c1e8d9bb75b3557b1c8fe43d7bfa72850f0db11ad727890ac7db0b82a5b` |
-| DollarStore implementation | `0x23cbcb073cc509de64e88d33fdccdd49cb5059a1119baa9a90ee9c31707754d8` |
-| Proxy (+ DLRS via initialize) | `0xfdc4e05b76cf6b9e59d9ec16c8e312a02b37ab80d5d143cbf48a97759a22cc3c` |
+| Upgrader timelock | `0xacbe20f968d2d8f313c159a1c367ab2b0f977e23525447bae99b971609eff7de` |
+| Governor timelock | `0x4345e861bf997a373cda8b5a3c62c77e52b3dcd6f8aad7b6f12f8d7cb8ba6bb6` |
+| DollarStore implementation | `0x90ce469097b02e2316be70a4ce44830bf43da1262a2c6862e4f36fb0c95eaf5c` |
+| Proxy (+ DLRS via initialize) | `0x029a8492bc8f789b6e07f218edf50c03cf8cc3248fe607a5d1743c6ae78cda8b` |
 
 ---
 
 ## Verification Status
 
-**All 5 contracts have been successfully verified on Etherscan.** 
-
-*   **Root cause solved:** Due to macOS vs Linux Yul optimizer compiler non-determinism when `via_ir` is enabled in Solidity (specifically around pointer sorting in `solc` optimization passes), compiling directly on macOS produces a slightly different bytecode than on Etherscan's Linux servers.
-*   **Resolution:** We compiled and ran the deploy script inside a standardized `ghcr.io/foundry-rs/foundry:latest` Linux Docker container. This ensured 100% byte-for-byte identical compiled bytecode between the deployed code and Etherscan's re-compilations.
+**All 8 contracts verified on Etherscan** (proxy, implementation, DLRS, both timelocks, three reused
+libraries). The `forge --verify` run reported "4/5" because the last submission was still queued when
+it stopped polling; a follow-up check confirmed every address returns verified source.
 
 ## Sanity checks
 
 ```bash
-PROXY=0x63d7EF051285c14FF54311cdd4Dc246DeD402097
-cast call $PROXY "upgrader()(address)" --rpc-url sepolia   # 0x35889DdA205122726a2267aDa0Acfd2ad281e137
-cast call $PROXY "governor()(address)" --rpc-url sepolia   # 0x18B486A50E935F689bEb4F2d83628b9110B2B3Ba
+PROXY=0xf10659961CE8c551F603370bd2f7694f60B3bC4d
+cast call $PROXY "version()(string)"   --rpc-url sepolia   # 0.9.4-U2
+cast call $PROXY "upgrader()(address)" --rpc-url sepolia   # 0xaef68b233aD1F959108ca43C35458c2A4FE8F177
+cast call $PROXY "governor()(address)" --rpc-url sepolia   # 0xf38DC70449f5FD807983b7654FEC909e223F6688
 cast call $PROXY "guardian()(address)" --rpc-url sepolia   # 0x19caCb4c0A7fC25598CC44564ED0eCA01249fc31
-cast call $PROXY "version()(string)"   --rpc-url sepolia   # 0.8.1-M8.1
+# adminCancelQueue was removed in this version: calling it reverts (no such selector).
+cast call $PROXY "adminCancelQueue(uint256)" 1 --rpc-url sepolia   # execution reverted
 ```
 
-## Hub assets (Sepolia rehearsal)
+Verified at deploy time: roles = timelocks/Safe, delays 3600/600, guardian is CANCELLER on both
+timelocks, deployer holds no admin. `adminCancelQueue` reverts (removed).
 
-**Date:** 2026-07-11. Listed the two mock stables as hub assets (poolId 0) through the governor timelock (schedule -> wait 600s -> execute). Both point at one shared, always-fresh `$1` test feed.
+## Hub assets + spoke (Sepolia rehearsal)
 
-| Contract | Address | Verified | Explorer |
-|---|---|---|---|
-| **TestnetPriceFeed** (shared `$1`, 8 dp) | `0xc09183D6C4657697B94a4056a98D09345C028341` | yes | [link](https://sepolia.etherscan.io/address/0xc09183D6C4657697B94a4056a98D09345C028341) |
+**Date:** 2026-08-28. Hub (poolId 0) = **USDC + USDS**; **USDT** listed as the first spoke (poolId 1).
+All three point at one shared, always-fresh `$1` test feed. Listings/spoke went through the governor
+timelock (schedule -> wait 600s -> execute). Mocks and feed are reused from the prior rehearsal.
 
-| Asset | Address | poolId | decimals | priceFeed | listed |
-|---|---|---|---|---|---|
-| Mock USDC | `0x0a9479f7aff770965b3b2D28b29E40C3F6168588` | 0 | 6 | feed above | **yes** |
-| Mock USDT | `0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05` | 0 | 6 | feed above | **yes** |
+| Contract | Address | Verified |
+|---|---|---|
+| **TestnetPriceFeed** (shared `$1`, 8 dp) | `0xc09183D6C4657697B94a4056a98D09345C028341` | yes |
 
-### Listing Transactions
+| Asset | Address | poolId | decimals | listed |
+|---|---|---|---|---|
+| Mock USDC | `0x0a9479f7aff770965b3b2D28b29E40C3F6168588` | 0 (hub) | 6 | **yes** |
+| Mock USDS | `0xdB82d075db6c2e30353825D78C21F472C2252D25` | 0 (hub) | 18 | **yes** |
+| Mock USDT | `0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05` | 1 (spoke) | 6 | **yes** |
+
+USDT spoke created with `minDlrsReserve = 0`. No launch caps set (hub and spoke left uncapped).
+
+### Governor timelock transactions
 
 | What | Action | Tx hash |
 |---|---|---|
-| Mock USDC | Schedule | `0x14c41c8ed8e45114d13d54611ee0aa6e11879d202a80dc52d37e5c1338edaa3b` |
-| Mock USDC | Execute | `0x4b5821afe2174cebd0ab6543426c9e73dc024e615bb69b80297e578b8512a1fe` |
-| Mock USDT | Schedule | `0x808d6b7bd85a6cf2ea15a047ecb48e2b7188e0711db82ad26ee5cc62ea524fc6` |
-| Mock USDT | Execute | `0xe79252ad4ce286a472d3ec379cb7b11ed3025d097daface540dbc5f66435662a` |
+| addHubAsset USDC | Schedule | `0x57970b1b934629906f8501b55c0efaa58f8880b22fb7a9513af4ad46f89b32c3` |
+| addHubAsset USDC | Execute | `0xb5d9e575be30f90c2cf975d2d401f9ae4ea9491361c271b6c0a0e720ea4ce41c` |
+| addHubAsset USDS | Schedule | `0x076058fd370c9d8fa8398632ce3292c00ff7f01cbdb138e9df3a8cca452f384e` |
+| addHubAsset USDS | Execute | `0x57045f6fb92a4e4ff87bba7b082f396cf6f0f321bdd445ba49eb753aebd5cd18` |
+| createSpoke USDT | Schedule | `0xbb2efe8f9fe1369440061c086e4be153505dd989ce0226873e2fdf9c80d252c2` |
+| createSpoke USDT | Execute | `0x6e9d0e3abd35425c8bffc2f6fe47833bf933bdaea9e3c06487961e19ff50eab4` |
 
 Operation ids:
-*   USDC: `0x10cb33b4d3883ffcaff1ed827b251a9e3a69b02421ef0cf42e1f2dc1c2684b73`
-*   USDT: `0xf012f0185d7f5f3e1ad07f3dd1e238dffe5262a46cdf3a7693cd061551848878`
+*   addHubAsset USDC: `0xaaad693bfa704dda4327edc5e85e3b776fcce2d4bba69e719ddedd77ccffc782`
+*   addHubAsset USDS: `0xb0956b0a859cff00b9ef12bdaeaccbfac32d32e502d70d8e2620f04daf5c7172`
+*   createSpoke USDT: `0xdabc883325e7f0ca73554cc40645a23eb78434f42ead72dc06a04036e226b3a8`
 
 ### Post-listing checks (all pass)
 
 ```bash
-PROXY=0x63d7EF051285c14FF54311cdd4Dc246DeD402097
-USDC=0x0a9479f7aff770965b3b2D28b29E40C3F6168588
+PROXY=0xf10659961CE8c551F603370bd2f7694f60B3bC4d
 USDT=0x2F906e2AEE73e28C76c487912D4Aa4dDd64C2C05
-cast call $PROXY "isAssetListed(address)(bool)"    $USDC --rpc-url sepolia   # true
-cast call $PROXY "isAssetListed(address)(bool)"    $USDT --rpc-url sepolia   # true
-cast call $PROXY "assetPriceFeed(address)(address)" $USDC --rpc-url sepolia  # 0xc091...8341
-cast call $PROXY "assetDecimals(address)(uint8)"    $USDC --rpc-url sepolia  # 6
+cast call $PROXY "isAssetListed(address)(bool)" $USDT --rpc-url sepolia   # true
+cast call $PROXY "assetPoolId(address)(uint16)" $USDT --rpc-url sepolia   # 1
+cast call $PROXY "poolCount()(uint16)"          --rpc-url sepolia         # 2
 ```
 
-## Seeded liquidity + smoke swap (2026-07-11)
+## Seeded liquidity + smoke swaps (2026-08-28)
 
-Public faucet `mint` used to fund the deployer, then hub liquidity added and a swap exercised
-end-to-end on this deploy. All at the `$1` peg (1:1), confirming deposit -> reserves -> DLRS mint
-and a reserve-neutral hub-hub swap.
+Public faucet `mint` funded the deployer, then hub + spoke liquidity added and swaps exercised
+end-to-end. All at the `$1` peg (1:1). USDS deposits normalize from 18 to 6 decimals internally.
 
-| Action | Amount | Tx hash |
+| Action | Pool | Amount |
 |---|---|---|
-| Mint USDC → deployer | 1,000,000 | `0xbc9b3742f3e8d220b653185103b0fa02712cabcf46136aa7f789188ca802f03d` |
-| Mint USDT → deployer | 1,000,000 | `0xbeaff9268c2fc1bc841e5aaa9456bb79aea8c1aa3a2502e2ea7d5c8cae17e153` |
-| Approve USDC → proxy | 1,000,000 | `0x96ba421983f7800cf9f80af7a87027c59b1424413861144adadeca345c08b461` |
-| Approve USDT → proxy | 1,000,000 | `0xabfcdb9c55b96266bfd11974e27a996f88fc60982abfdfd7197a0551cab74be8` |
-| Deposit USDC (hub) | 1,000,000 | `0x5ce6fef7373a324b97c8026a01cbac235f89541094cb85231de67794e7b3a1f6` |
-| Deposit USDT (hub) | 1,000,000 | `0xcd1fd3293ca6185a3b3f8f1443f096804d2766f8ddfc8f72db16e2c52e1434b0` |
-| Mint USDC (swap test) | 1,000 | `0xb22a9f21e2ae667cfc86f94dcdcc3658a704d39eb144d256c2dc8e132ef503d8` |
-| Approve USDC (swap) | 1,000 | `0x6c34e63f5ab9ede8409d17eb49f893f837e6a292bcfb9de4467670760c70fe01` |
-| Swap USDC → USDT | 1,000 → 1,000 | `0x6c8b070a78aa9bf5f2a58acc07b28c08937cd4afbee1cee8479fa918e5cb53cf` |
+| Deposit USDC (hub) | 0 | 100,000 |
+| Deposit USDS (hub) | 0 | 100,000 |
+| Deposit USDT (spoke reserve) | 1 | 50,000 |
+| Deposit USDC (spoke DLRS-side funding) | 1 | 50,000 |
 
-Post-state: DLRS supply `2_000_000_000000` (2M, minted 1:1 on the two deposits); hub reserves
-USDC `1_001_000_000000`, USDT `999_000_000000` (swap moved 1k of value 1:1). Swapper received
-exactly 1,000 USDT for 1,000 USDC — no slippage at peg.
+| Swap | Route | Amount | Tx hash |
+|---|---|---|---|
+| USDC → USDS | hub → hub | 1,000 → 1,000 | `0xa98b16259ad43c5084c6e9e1b2548abffa19972e2e827f12fa07d264422c3110` |
+| USDC → USDT | hub → spoke | 1,000 → 1,000 | `0xf018752039e85a9b1c72d80be5299f742357de7d7084d3dbc553fdefa9c5ebe6` |
+| USDT → USDC | spoke → hub | 1,000 → 1,000 | `0xe67acf6ad423d062c975cf24ed786a3572e117e5b1101b358a891d82cf41b067` |
 
-See `contracts/DEPLOY.md` for the full runbook.
+Post-state: DLRS supply `200_000_000000` (200k, minted 1:1 on the two hub deposits). Hub reserves USDC
+`151_000_000000`, USDS `99_000_000000` (the hub->hub swap moved 1k of value 1:1). Spoke USDT reserve
+`50_000_000000` and DLRS side `50_000_000000` (the hub<->spoke round trip netted to zero). Every swap
+filled 1:1 with no slippage at peg.
+
+See `contracts/DEPLOY.md` for the full runbook and `test/testnet-mocks/DEPLOYMENT.md` for the mocks.
