@@ -27,7 +27,7 @@ There are two deploy scripts:
 
 ## Prerequisites
 
-- Foundry installed and dependencies: `cd contracts && forge install` (OZ v5.6.1 x2 + forge-std).
+- Foundry installed and the pinned dependencies: `git submodule update --init --recursive` (OZ v5.6.1 x2 + forge-std v1.16.2).
 - Green suite: `forge test`.
 - A deployer EOA funded with gas on the target network (Sepolia test ETH / mainnet ETH).
 - An Etherscan API key.

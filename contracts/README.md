@@ -29,25 +29,19 @@ Verify: `forge --version`.
 ### 2. Get the code
 
 ```bash
-git clone https://github.com/wandering-soupsmith/dollar.git
+git clone --recursive https://github.com/wandering-soupsmith/dollar.git
 cd dollar/contracts
 ```
 
-### 3. Install dependencies
+### 3. Dependencies
 
-Dependencies are **not** committed (`contracts/lib/` is git-ignored), so install them with Forge.
-Pin OpenZeppelin to **v5.6.x**:
+OpenZeppelin Contracts `v5.6.1`, OpenZeppelin Contracts Upgradeable `v5.6.1`, and forge-std
+`v1.16.2` are git submodules in `contracts/lib/`, pinned to exact commits. Clone with
+`--recursive`, or fetch them in an existing clone:
 
 ```bash
-forge install OpenZeppelin/openzeppelin-contracts@v5.6.1
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.6.1
-forge install foundry-rs/forge-std
+git submodule update --init --recursive
 ```
-
-> If Forge complains about a dirty working tree, add `--no-commit` to each command
-> (older Foundry), or commit/stash first. Newer Foundry does not create commits.
-
-After this you should have `contracts/lib/{openzeppelin-contracts, openzeppelin-contracts-upgradeable, forge-std}`.
 
 ### 4. Build & test
 

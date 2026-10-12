@@ -16,7 +16,6 @@ contracts/slither.err.txt
 
 # Dependencies
 node_modules/
-contracts/lib/
 
 # IDE
 .idea/
