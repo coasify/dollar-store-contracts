@@ -42,8 +42,19 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     uint256 private constant DEFAULT_PEG_TOLERANCE_BPS = 50;
     /// @dev Maximum settable peg tolerance: 500 bps == 5%.
     uint256 private constant MAX_PEG_TOLERANCE_BPS = 500;
-    /// @dev Max oracle staleness set at initialize: 3600 s == 1 hour.
-    uint256 private constant DEFAULT_MAX_STALENESS = 3600;
+    /// @dev Max oracle staleness set at initialize: 90000 s == 25 hours.
+    ///      Chainlink's mainnet stablecoin feeds are heartbeat-driven at 24h and only update sooner on a
+    ///      deviation, so a healthy feed is routinely hours old: measured 2026-09-23, USDC/USD was 1.1h
+    ///      old and USDT/USD 18.1h old. Anything at or below the heartbeat marks a healthy feed as stale
+    ///      and reverts every swap, so the initial value is the heartbeat plus an hour of margin.
+    ///      Governance can tighten it per deployment; a faster feed deserves a shorter window.
+    uint256 private constant DEFAULT_MAX_STALENESS = 90000;
+    /// @dev Maximum settable staleness: 3 days. This is a ceiling on what governance may configure, not
+    ///      a value anything runs with, so it is set with margin: some feeds run on a 48h heartbeat, and
+    ///      a ceiling below what a listed feed needs bricks swaps and takes an upgrade to lift, while a
+    ///      generous one only matters if a governor action is wrong, which is timelocked and cancellable
+    ///      by the guardian.
+    uint256 private constant MAX_STALENESS = 3 days;
 
     // Routing types (RouteKind / Route) and the directed-swap engine live in SwapRouteLib (linked,
     // delegatecall) so this implementation fits under the EIP-170 24576-byte runtime limit.
@@ -147,7 +158,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.9.5-U2";
+        return "0.9.6-U2";
     }
 
     // ============ Two-step Role Transfers ============
@@ -825,7 +836,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function setMaxStaleness(uint256 staleness) external override onlyGovernor {
-        if (staleness == 0 || staleness > 1 days) revert InvalidStaleness();
+        if (staleness == 0 || staleness > MAX_STALENESS) revert InvalidStaleness();
         CoreStorage.layout().maxStaleness = staleness;
         emit MaxStalenessSet(staleness);
     }

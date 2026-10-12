@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
@@ -198,5 +199,55 @@ contract LaunchCapsTest is Test {
         vm.prank(guardian);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(5)));
         store.lowerLaunchCap(5, 500e6);
+    }
+
+    // ============ Listing a capped spoke in one governor operation ============
+
+    /// @notice A spoke must never exist uncapped, not even for a block. `setLaunchCap` takes a poolId,
+    ///         which only exists once `createSpoke` has run, so the deploy script queues the two calls
+    ///         as one timelock batch against the id the new pool is about to get. This is that batch.
+    function test_batchedCreateSpokeAndCapLandTogether() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(this);
+        address[] memory executors = new address[](1);
+        executors[0] = address(0); // open execution, as in production
+        TimelockController governorTL = new TimelockController(2 days, proposers, executors, address(0));
+
+        DollarStore impl = new DollarStore();
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, address(governorTL), guardian));
+        DollarStore timelocked = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
+
+        vm.startPrank(address(governorTL));
+        timelocked.addHubAsset(address(usdc), address(feed));
+        vm.stopPrank();
+
+        MockERC20 spokeAsset = new MockERC20("Ripple USD", "RLUSD", 18);
+        uint16 expectedPoolId = uint16(timelocked.poolCount());
+        uint256 cap = 250_000e6;
+
+        address[] memory targets = new address[](2);
+        uint256[] memory values = new uint256[](2);
+        bytes[] memory payloads = new bytes[](2);
+        targets[0] = address(timelocked);
+        payloads[0] = abi.encodeCall(DollarStore.createSpoke, (address(spokeAsset), address(feed), 150_000e6));
+        targets[1] = address(timelocked);
+        payloads[1] = abi.encodeCall(DollarStore.setLaunchCap, (expectedPoolId, cap));
+
+        governorTL.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), 2 days);
+        vm.warp(block.timestamp + 2 days);
+        governorTL.executeBatch(targets, values, payloads, bytes32(0), bytes32(0));
+        feed.setUpdatedAt(block.timestamp); // the timelock wait aged the mock answer past maxStaleness
+
+        assertEq(timelocked.assetPoolId(address(spokeAsset)), expectedPoolId, "spoke listed at the expected id");
+        assertEq(timelocked.getLaunchCap(expectedPoolId), cap, "cap applied in the same operation");
+        assertEq(timelocked.getMinDlrsReserve(expectedPoolId), 150_000e6, "floor set at creation");
+
+        // And the cap bites: a deposit over it reverts rather than growing the pool past the limit.
+        spokeAsset.mint(alice, 300_000e18);
+        vm.startPrank(alice);
+        spokeAsset.approve(address(timelocked), 300_000e18);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, expectedPoolId, 300_000e6, cap));
+        timelocked.deposit(expectedPoolId, address(spokeAsset), 300_000e18, block.timestamp);
+        vm.stopPrank();
     }
 }

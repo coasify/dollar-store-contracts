@@ -112,17 +112,24 @@ executed and the asset unpaused.
 
 ## Recommended launch parameters
 
-- **Upgrader timelock delay**: 7 days. Upgrades are the highest-impact action, so
+- **Upgrader timelock delay**: 14 days. Upgrades are the highest-impact action, so
   they get the longest exit window.
-- **Governor timelock delay**: 48-72h to start, raised over time. Long enough to
-  give users a real exit window, short enough to stay operational. The instant
-  guardian pause is what covers true emergencies, so the governor delay does not
-  need to be aggressively short.
+- **Governor timelock delay**: 7 days. A full working week, so a queued operation
+  cannot pass unseen over a weekend or a holiday. The instant guardian pause is
+  what covers true emergencies, so the governor delay does not need to be short.
 - **Safe threshold**: 3-of-5. At least 2 hardware wallets, and at least one
   hardware signer required per transaction. Signers should be independent parties
   (for example an external liquidity-provider signer) and diverse in location and
   hardware vendor.
-- **Peg controls**: `pegTolerance` 0.5% (50 bps) default, `maxStaleness` 1 hour.
+- **Peg controls**: `pegTolerance` 0.5% (50 bps) default.
+- **`maxStaleness`**: 25 hours (90,000s), the value a deploy now starts with.
+  Chainlink's mainnet stablecoin feeds are heartbeat-driven at 24h and only update
+  sooner on a deviation, so a healthy feed is routinely hours old: measured on
+  2026-09-23, USDC/USD had last updated 1.1h earlier and USDT/USD 18.1h earlier.
+  A window at or below the heartbeat marks a healthy feed as stale and reverts
+  every swap. `setMaxStaleness` accepts up to 3 days, a ceiling with room for a
+  48h heartbeat feed rather than a value anything runs with. Tighten the live
+  value per deployment when every listed asset has a faster feed.
 
 ## Key hygiene
 

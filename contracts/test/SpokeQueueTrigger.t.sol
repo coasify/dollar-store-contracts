@@ -230,7 +230,7 @@ contract SpokeQueueTriggerTest is Test {
         MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
         vm.warp(100_000);
         feed.setUpdatedAt(100_000); // keep the rlusd feed fresh so the deposit itself succeeds
-        usdcFeed.setUpdatedAt(100_000 - 3601); // usdc feed older than maxStaleness
+        usdcFeed.setUpdatedAt(100_000 - (store.maxStaleness() + 1)); // usdc feed one second past the window
         _depositRlusdAndAssertSkipped();
     }
 

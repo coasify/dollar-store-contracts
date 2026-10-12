@@ -408,7 +408,10 @@ interface IDollarStore {
     function setPriceFeed(address asset, address feed) external;
     /// @notice Set the peg tolerance (basis points). Governor-gated (via timelock).
     function setPegTolerance(uint256 tolerance) external;
-    /// @notice Set the max oracle staleness (seconds). Governor-gated (via timelock).
+    /// @notice Set the max oracle staleness (seconds). Governor-gated (via timelock). Must be above 0
+    ///         and at most 3 days, which is a ceiling with room for a 48h heartbeat feed. The value in
+    ///         use should be the slowest listed feed's heartbeat plus margin, 25h for the 24h feeds on
+    ///         Chainlink's mainnet stablecoins.
     function setMaxStaleness(uint256 staleness) external;
     /// @notice Pause deposits/inflows of an asset. Guardian-gated. Exits stay open.
     function pauseDeposits(address asset) external;
