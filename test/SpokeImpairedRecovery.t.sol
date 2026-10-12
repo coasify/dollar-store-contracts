@@ -58,7 +58,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         vm.prank(governor);
         vm.expectPartialRevert(IDollarStore.PoolKilled.selector);
         store.removePool(spoke);
-        vm.prank(guardian);
+        vm.prank(unpauser);
         vm.expectPartialRevert(IDollarStore.PoolKilled.selector);
         store.unpausePool(spoke);
         vm.prank(governor);

@@ -9,6 +9,7 @@ import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {NormalizationLib} from "../src/libraries/NormalizationLib.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice M2 behaviour: hub pool creation at init + hub asset registry + decimal normalization.
 contract AssetRegistryTest is Test {
@@ -16,6 +17,8 @@ contract AssetRegistryTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
 
@@ -28,7 +31,8 @@ contract AssetRegistryTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
 
         usdc = new MockERC20("USD Coin", "USDC", 6);

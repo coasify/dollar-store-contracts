@@ -10,13 +10,18 @@ import {DollarStore} from "../src/DollarStore.sol";
 /// @title DeployGovernance - Full production deploy: two timelocks + DollarStore, wired at genesis.
 /// @notice Deploys an upgrader timelock (long delay) and a governor timelock (short delay), each
 ///         proposed/cancelled by its own operator Safe, then deploys the DollarStore proxy
-///         initialized with (upgraderTimelock, governorTimelock, guardianSafe). No two-step handoff
-///         is needed: the roles are set to their production holders at initialize() time.
-/// @dev Topology (4 operator Safes; on a testnet you may point them at the same address):
+///         initialized with (upgraderTimelock, governorTimelock, guardianSafe, unpauserSafe,
+///         pausers). No handoff is needed: the roles are set to their production holders at
+///         initialize() time.
+/// @dev Topology (5 operator Safes and the pausers; on a testnet you may point them at the same address):
 ///      - upgraderSafe: proposer/canceller of the upgrader timelock.
 ///      - governorSafe: proposer/canceller of the governor timelock.
-///      - guardianSafe: the `guardian` directly (no timelock; must be instant). It can pause; it
-///        cannot cancel a queued timelock operation.
+///      - guardianSafe: the `guardian` directly (no timelock; must be instant). It tightens launch
+///        caps and haircuts escrow after a loss; it cannot pause, unpause, or cancel a queued
+///        timelock operation.
+///      - unpauserSafe: the `unpauser` directly (no timelock). It lifts pauses and sets who may pause.
+///      - pausers: the addresses that may pause from the first block. Each can pause alone and can
+///        do nothing else.
 ///      - vetoSafe: CANCELLER on both timelocks, so it can abort a malicious queued op even if a
 ///        proposer Safe is compromised. It holds no role on DollarStore.
 ///      The upgrader/governor timelocks are the on-chain `upgrader`/`governor` roles; each is a
@@ -35,6 +40,8 @@ import {DollarStore} from "../src/DollarStore.sol";
 ///        Ethereum mainnet it must be set, and differ from UPGRADER_SAFE, GOVERNOR_SAFE and VETO_SAFE.
 ///      - VETO_SAFE (required): the Safe that can cancel queued timelock operations. On Ethereum
 ///        mainnet it must differ from GUARDIAN_SAFE.
+///      - UNPAUSER_SAFE (required): the unpauser.
+///      - PAUSERS (required): comma-separated addresses that may pause. At least one.
 ///      - UPGRADER_DELAY (optional, seconds): upgrader timelock minDelay. Default 1209600 (14d).
 ///      - GOVERNOR_DELAY (optional, seconds): governor timelock minDelay. Default 604800 (7d).
 contract DeployGovernance is Script {
@@ -52,6 +59,8 @@ contract DeployGovernance is Script {
     /// @param governorSafe Operator Safe (proposer + self-canceller) of the governor timelock.
     /// @param guardianSafe The guardian address (used directly, no timelock).
     /// @param vetoSafe     The canceller on both timelocks.
+    /// @param unpauserSafe The unpauser address (used directly, no timelock).
+    /// @param pausers      The addresses that may pause from the first block.
     /// @param upgraderDelay minDelay (seconds) of the upgrader timelock.
     /// @param governorDelay minDelay (seconds) of the governor timelock.
     function deploy(
@@ -60,6 +69,8 @@ contract DeployGovernance is Script {
         address governorSafe,
         address guardianSafe,
         address vetoSafe,
+        address unpauserSafe,
+        address[] memory pausers,
         uint256 upgraderDelay,
         uint256 governorDelay
     ) public returns (Deployed memory d) {
@@ -67,6 +78,7 @@ contract DeployGovernance is Script {
         require(governorSafe != address(0), "governorSafe = zero");
         require(guardianSafe != address(0), "guardianSafe = zero");
         require(vetoSafe != address(0), "vetoSafe = zero");
+        require(pausers.length != 0, "no pausers");
 
         address[] memory executors = new address[](1);
         executors[0] = address(0); // open executor role
@@ -86,7 +98,8 @@ contract DeployGovernance is Script {
 
         DollarStore implementation = new DollarStore();
         bytes memory initData = abi.encodeCall(
-            DollarStore.initialize, (address(d.upgraderTimelock), address(d.governorTimelock), guardianSafe)
+            DollarStore.initialize,
+            (address(d.upgraderTimelock), address(d.governorTimelock), guardianSafe, unpauserSafe, pausers)
         );
         d.store = DollarStore(address(new ERC1967Proxy(address(implementation), initData)));
     }
@@ -118,6 +131,8 @@ contract DeployGovernance is Script {
         address guardianSafe = vm.envOr("GUARDIAN_SAFE", upgraderSafe);
         address vetoSafe = vm.envAddress("VETO_SAFE");
         checkSeparation(guardianSafe, vetoSafe, upgraderSafe, governorSafe);
+        address unpauserSafe = vm.envAddress("UNPAUSER_SAFE");
+        address[] memory pausers = vm.envAddress("PAUSERS", ",");
         // Mainnet values, agreed 2026-09-22: an upgrade is the change nobody should be able to rush, so
         // it carries two weeks. A governor action carries one full working week, which is the window
         // someone needs to see a queued operation and react to it before it executes.
@@ -126,7 +141,15 @@ contract DeployGovernance is Script {
 
         vm.startBroadcast(deployerKey);
         Deployed memory d = deploy(
-            vm.addr(deployerKey), upgraderSafe, governorSafe, guardianSafe, vetoSafe, upgraderDelay, governorDelay
+            vm.addr(deployerKey),
+            upgraderSafe,
+            governorSafe,
+            guardianSafe,
+            vetoSafe,
+            unpauserSafe,
+            pausers,
+            upgraderDelay,
+            governorDelay
         );
         vm.stopBroadcast();
 
@@ -138,6 +161,8 @@ contract DeployGovernance is Script {
         console2.log("governor Safe:      ", governorSafe);
         console2.log("guardian (Safe):    ", guardianSafe);
         console2.log("veto (Safe):        ", vetoSafe);
+        console2.log("unpauser (Safe):    ", unpauserSafe);
+        console2.log("pausers:            ", pausers.length);
         console2.log("upgrader delay (s): ", upgraderDelay);
         console2.log("governor delay (s): ", governorDelay);
     }

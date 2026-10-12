@@ -11,6 +11,7 @@ import {QueueStorage} from "../../src/storage/QueueStorage.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockAggregatorV3} from "../mocks/MockAggregatorV3.sol";
 import {Handler} from "./Handler.sol";
+import {Pausers} from "../utils/Pausers.sol";
 
 /// @notice Core protocol invariants under randomized hub + spoke sequences, including spoke A being
 ///         retired and its asset listed again as a new pool, and spoke-to-spoke swaps between spoke A and
@@ -40,11 +41,14 @@ contract DollarStoreInvariants is StdInvariant, Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 

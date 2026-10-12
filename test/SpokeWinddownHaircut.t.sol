@@ -8,6 +8,7 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice U2 P8: spoke winding-down lifecycle and the guardian escrow-impairment haircut.
 contract SpokeWinddownHaircutTest is Test {
@@ -15,6 +16,8 @@ contract SpokeWinddownHaircutTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -33,7 +36,8 @@ contract SpokeWinddownHaircutTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
 
         usdc = new MockERC20("USD Coin", "USDC", 6);
@@ -169,7 +173,7 @@ contract SpokeWinddownHaircutTest is Test {
         // Simulate a balance impairment: the contract loses 40% of its RLUSD.
         deal(address(rlusd), address(store), 600e18);
 
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
 
         vm.expectEmit(true, true, false, true, address(store));
@@ -188,7 +192,7 @@ contract SpokeWinddownHaircutTest is Test {
         _queueSpokeToHub(bob, 1_000e18);
         deal(address(rlusd), address(store), 0); // total loss
 
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.prank(guardian);
         uint256 removed = store.haircutEscrow(address(rlusd), 10);
@@ -208,7 +212,7 @@ contract SpokeWinddownHaircutTest is Test {
 
     function test_haircutEscrow_revertsNotImpaired() public {
         _queueSpokeToHub(bob, 1_000e18); // full balance present, not impaired
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.prank(guardian);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotImpaired.selector, address(rlusd)));
@@ -218,7 +222,7 @@ contract SpokeWinddownHaircutTest is Test {
     function test_haircutEscrow_onlyGuardian() public {
         _queueSpokeToHub(bob, 1_000e18);
         deal(address(rlusd), address(store), 600e18);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.prank(bob);
         vm.expectRevert(IDollarStore.OnlyGuardian.selector);
@@ -230,7 +234,7 @@ contract SpokeWinddownHaircutTest is Test {
         _queueSpokeToHub(bob, 600e18); // position 2 (meets the 500 minimum)
         deal(address(rlusd), address(store), 800e18);
 
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.prank(guardian);
         vm.expectRevert(IDollarStore.HaircutBudgetExceeded.selector);
@@ -252,7 +256,7 @@ contract SpokeWinddownHaircutTest is Test {
 
     function test_haircutEscrow_revertsNoEscrow() public {
         // Pool paused (required) but no queued escrow of the asset -> NoEscrowToHaircut.
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.prank(guardian);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.NoEscrowToHaircut.selector, address(rlusd)));
@@ -279,7 +283,7 @@ contract SpokeWinddownHaircutTest is Test {
         assertEq(rlusd.balanceOf(alice) - before, 1_000e18, "escrow returned");
 
         // A killed pool cannot be unpaused or removed again.
-        vm.prank(guardian);
+        vm.prank(unpauser);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolKilled.selector, spoke));
         store.unpausePool(spoke);
         vm.prank(governor);
@@ -342,7 +346,7 @@ contract SpokeWinddownHaircutTest is Test {
     function test_withdrawSpoke_liveUnderPause() public {
         _depositSpokeAsset(alice, 1_000e18);
         _fund(alice, 1_000e6);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
 
         vm.prank(alice);

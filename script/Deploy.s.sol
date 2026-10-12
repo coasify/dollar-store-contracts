@@ -8,14 +8,16 @@ import {DollarStore} from "../src/DollarStore.sol";
 
 /// @title Deploy - Deploys the DollarStore UUPS proxy + implementation
 /// @notice Deploys the implementation, then an ERC1967Proxy initialized with
-///         (upgrader, governor, guardian).
+///         (upgrader, governor, guardian, unpauser, pausers).
 /// @dev Env vars:
 ///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key.
 ///      This is the dev / staging deploy (roles are plain addresses). For the production topology
 ///      (two timelocks + Safe) use script/DeployGovernance.s.sol.
 ///      - UPGRADER (optional): upgrade authority; defaults to the deployer.
 ///      - GOVERNOR (optional): risk/registry/caps authority; defaults to the deployer.
-///      - GUARDIAN (optional): emergency authority; defaults to the deployer.
+///      - GUARDIAN (optional): tightens caps and haircuts escrow; defaults to the deployer.
+///      - UNPAUSER (optional): lifts pauses and sets pausers; defaults to the deployer.
+///      - PAUSER (optional): the first address that may pause; defaults to the deployer.
 contract Deploy is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -24,6 +26,9 @@ contract Deploy is Script {
         address upgrader = vm.envOr("UPGRADER", deployer);
         address governor = vm.envOr("GOVERNOR", deployer);
         address guardian = vm.envOr("GUARDIAN", deployer);
+        address unpauser = vm.envOr("UNPAUSER", deployer);
+        address[] memory pausers = new address[](1);
+        pausers[0] = vm.envOr("PAUSER", deployer);
 
         vm.startBroadcast(deployerKey);
 
@@ -31,7 +36,8 @@ contract Deploy is Script {
         DollarStore implementation = new DollarStore();
 
         // 2. Deploy the ERC1967 proxy, initializing it in the same tx.
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, pausers));
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
 
         vm.stopBroadcast();
@@ -45,5 +51,7 @@ contract Deploy is Script {
         console2.log("upgrader:                  ", upgrader);
         console2.log("governor:                  ", governor);
         console2.log("guardian:                  ", guardian);
+        console2.log("unpauser:                  ", unpauser);
+        console2.log("first pauser:              ", pausers[0]);
     }
 }

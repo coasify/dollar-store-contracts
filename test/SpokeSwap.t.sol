@@ -9,6 +9,7 @@ import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice U2 P5: hub<>spoke routing. hub->spoke pays the spoke asset from the spoke reserve and grows
 ///         dlrsReserve; spoke->hub pays a hub asset from hub reserves and consumes dlrsReserve, gated by
@@ -19,6 +20,8 @@ contract SpokeSwapTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice"); // LP
     address internal bob = makeAddr("bob"); // trader
@@ -32,7 +35,8 @@ contract SpokeSwapTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -175,7 +179,7 @@ contract SpokeSwapTest is Test {
 
     function test_swap_intoPausedSpoke_reverts() public {
         _seedSpokeAsset(1_000e18);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
 
         vm.startPrank(carol);
@@ -211,7 +215,7 @@ contract SpokeSwapTest is Test {
     ///         Mirrors the swap-side PoolPaused revert on the view path.
     function test_getSwapQuote_pausedSpoke_zero() public {
         _seedSpokeAsset(1_000e18);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         assertEq(store.getSwapQuote(address(usdc), address(rlusd), 500e6), 0, "paused spoke not quotable");
     }

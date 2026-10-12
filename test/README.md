@@ -15,6 +15,7 @@ feature-named integration suites listed below rather than by a same-named unit f
 | `DollarStore.withdraw` (exit issuer probe, in `SpokeLifecycleLib`) | `ExitIssuerProbe.t.sol`, `fork/IssuerProbeFork.t.sol` (needs `MAINNET_RPC_URL`) |
 | `DollarStore.sol` (asset registry) | `AssetRegistry.t.sol` |
 | `DollarStore.sol` (risk controls: pauses, peg, staleness) | `RiskControls.t.sol` |
+| `DollarStore.sol` (who may pause and unpause: pausers, unpauser) | `PauseRoles.t.sol` |
 | `DollarStore.sol` (launch caps) | `LaunchCaps.t.sol` |
 | `DLRS.sol` (soulbound token, mint/burn authority) | `DLRS.t.sol` |
 
@@ -55,7 +56,7 @@ A second spoke stays active so spoke-to-spoke swaps always have a partner.
 
 ## Mocks and untested scripts
 
-`test/mocks/` holds the test doubles: a plain ERC-20, one that blocks chosen senders or recipients,
+`test/utils/Pausers.sol` builds the pauser list that `initialize` takes. `test/mocks/` holds the test doubles: a plain ERC-20, one that blocks chosen senders or recipients,
 one that takes a fee on transfer, one that re-enters the store on transfer, and a Chainlink-style
 price feed.
 

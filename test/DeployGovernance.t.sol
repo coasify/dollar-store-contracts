@@ -30,6 +30,9 @@ contract DeployGovernanceTest is Test {
     address internal governorSafe = makeAddr("governorSafe");
     address internal guardianSafe = makeAddr("guardianSafe");
     address internal vetoSafe = makeAddr("vetoSafe");
+    address internal unpauserSafe = makeAddr("unpauserSafe");
+    address internal pauserOne = makeAddr("pauserOne");
+    address internal pauserTwo = makeAddr("pauserTwo");
     address internal anyone = makeAddr("anyone");
 
     uint256 internal constant UP_DELAY = 7 days;
@@ -39,11 +42,26 @@ contract DeployGovernanceTest is Test {
         deployer = new DeployGovernance();
         // In this test the deploy calls originate from the DeployGovernance instance, so it is the
         // one holding (and renouncing) the temporary timelock admin.
-        DeployGovernance.Deployed memory d =
-            deployer.deploy(address(deployer), upgraderSafe, governorSafe, guardianSafe, vetoSafe, UP_DELAY, GOV_DELAY);
+        DeployGovernance.Deployed memory d = deployer.deploy(
+            address(deployer),
+            upgraderSafe,
+            governorSafe,
+            guardianSafe,
+            vetoSafe,
+            unpauserSafe,
+            _pausers(),
+            UP_DELAY,
+            GOV_DELAY
+        );
         store = d.store;
         upgraderTL = d.upgraderTimelock;
         governorTL = d.governorTimelock;
+    }
+
+    function _pausers() internal view returns (address[] memory list) {
+        list = new address[](2);
+        list[0] = pauserOne;
+        list[1] = pauserTwo;
     }
 
     // ============ Wiring ============
@@ -105,9 +123,6 @@ contract DeployGovernanceTest is Test {
         bytes32 salt = bytes32(uint256(11));
         bytes32 id = governorTL.hashOperation(address(store), 0, data, bytes32(0), salt);
 
-        vm.prank(guardianSafe);
-        store.pause();
-
         vm.prank(governorSafe);
         governorTL.schedule(address(store), 0, data, bytes32(0), salt, GOV_DELAY);
 
@@ -126,11 +141,6 @@ contract DeployGovernanceTest is Test {
         vm.prank(newGuardian);
         store.acceptGuardian();
         assertEq(store.guardian(), newGuardian, "guardian replaced");
-
-        // The old guardian's pause is lifted by the new one.
-        vm.prank(newGuardian);
-        store.unpause();
-        assertFalse(store.paused(), "unpaused by the new guardian");
     }
 
     function test_veto_cannotPause() public {
@@ -142,7 +152,17 @@ contract DeployGovernanceTest is Test {
     function test_deploy_revertsOnZeroVetoSafe() public {
         DeployGovernance fresh = new DeployGovernance();
         vm.expectRevert(bytes("vetoSafe = zero"));
-        fresh.deploy(address(fresh), upgraderSafe, governorSafe, guardianSafe, address(0), UP_DELAY, GOV_DELAY);
+        fresh.deploy(
+            address(fresh),
+            upgraderSafe,
+            governorSafe,
+            guardianSafe,
+            address(0),
+            unpauserSafe,
+            _pausers(),
+            UP_DELAY,
+            GOV_DELAY
+        );
     }
 
     function test_checkSeparation_mainnetRequiresGuardianApartFromEveryCanceller() public {
@@ -166,8 +186,17 @@ contract DeployGovernanceTest is Test {
     ///         proposer can cancel the operation that replaces it, even with a separate veto Safe.
     function test_guardianThatIsAProposer_canCancelItsOwnReplacement() public {
         DeployGovernance fresh = new DeployGovernance();
-        DeployGovernance.Deployed memory d =
-            fresh.deploy(address(fresh), guardianSafe, guardianSafe, guardianSafe, vetoSafe, UP_DELAY, GOV_DELAY);
+        DeployGovernance.Deployed memory d = fresh.deploy(
+            address(fresh),
+            guardianSafe,
+            guardianSafe,
+            guardianSafe,
+            vetoSafe,
+            unpauserSafe,
+            _pausers(),
+            UP_DELAY,
+            GOV_DELAY
+        );
         bytes memory data = abi.encodeCall(DollarStore.transferGuardian, (makeAddr("newGuardian")));
         bytes32 id = d.governorTimelock.hashOperation(address(d.store), 0, data, bytes32(0), bytes32(0));
 
@@ -182,12 +211,48 @@ contract DeployGovernanceTest is Test {
         fresh.checkSeparation(guardianSafe, vetoSafe, guardianSafe, guardianSafe);
     }
 
-    // ============ Guardian is instant ============
+    // ============ Pausing and unpausing ============
 
-    function test_guardian_pausesInstantly() public {
+    function test_pauseRolesWired() public view {
+        assertEq(store.unpauser(), unpauserSafe, "unpauser = unpauser safe");
+        assertTrue(store.isPauser(pauserOne), "first pauser listed");
+        assertTrue(store.isPauser(pauserTwo), "second pauser listed");
+        assertFalse(store.isPauser(guardianSafe), "guardian is not a pauser unless listed");
+        assertFalse(store.isPauser(unpauserSafe), "unpauser is not a pauser unless listed");
+    }
+
+    function test_anyPauser_pausesInstantly_onlyUnpauserLifts() public {
         vm.prank(guardianSafe);
+        vm.expectRevert(IDollarStore.OnlyPauser.selector);
         store.pause();
-        assertTrue(store.paused(), "guardian pauses without a timelock");
+
+        vm.prank(pauserTwo);
+        store.pause();
+        assertTrue(store.paused(), "one pauser pauses without a timelock");
+
+        vm.prank(pauserOne);
+        vm.expectRevert(IDollarStore.OnlyUnpauser.selector);
+        store.unpause();
+
+        vm.prank(unpauserSafe);
+        store.unpause();
+        assertFalse(store.paused(), "unpauser lifts the pause");
+    }
+
+    function test_deploy_revertsWithNoPausers() public {
+        DeployGovernance fresh = new DeployGovernance();
+        vm.expectRevert(bytes("no pausers"));
+        fresh.deploy(
+            address(fresh),
+            upgraderSafe,
+            governorSafe,
+            guardianSafe,
+            vetoSafe,
+            unpauserSafe,
+            new address[](0),
+            UP_DELAY,
+            GOV_DELAY
+        );
     }
 
     // ============ Upgrades require the upgrader timelock ============

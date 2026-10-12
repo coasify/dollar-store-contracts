@@ -3,8 +3,8 @@
 Paths are relative to the repository root, and commands run from there.
 
 Step by step to deploy DollarStore with the production topology: an **upgrader timelock**, a
-**governor timelock**, a **guardian Safe**, and a **veto Safe** that can cancel queued timelock
-operations. The same procedure runs on Sepolia (rehearsal) and
+**governor timelock**, a **guardian Safe**, a **veto Safe** that can cancel queued timelock
+operations, an **unpauser Safe**, and the first **pausers**. The same procedure runs on Sepolia (rehearsal) and
 mainnet (production); you only change which environment file you load. Design reference:
 [SECURITY.md](../SECURITY.md).
 
@@ -52,6 +52,9 @@ There are two deploy scripts:
      `UPGRADER_SAFE`). On mainnet `GUARDIAN_SAFE` must be set and must differ from `UPGRADER_SAFE`,
      `GOVERNOR_SAFE` and `VETO_SAFE`, or the deploy script refuses to run
    - `VETO_SAFE` (required): the Safe that can cancel queued timelock operations
+   - `UNPAUSER_SAFE` (required): the Safe that lifts pauses and sets who may pause
+   - `PAUSERS` (required): the addresses that may pause from the first block, comma-separated with
+     no spaces. At least one. Each can pause alone and can do nothing else
    - `UPGRADER_DELAY`, `GOVERNOR_DELAY` (seconds). On Sepolia use `60` and `30`; on mainnet
      `1209600` (14d) and `604800` (7d), which are also the script's defaults. The delays are fixed at
      deploy, so set them before Phase 1. Set them even when using the defaults: the `schedule`
@@ -168,7 +171,9 @@ DEPLOYER=$(cast wallet address --private-key $DEPLOYER_PRIVATE_KEY)
 cast call $PROXY "upgrader()(address)" --rpc-url sepolia
 cast call $PROXY "governor()(address)" --rpc-url sepolia
 cast call $PROXY "guardian()(address)" --rpc-url sepolia
+cast call $PROXY "unpauser()(address)" --rpc-url sepolia
 cast call $PROXY "version()(string)"   --rpc-url sepolia
+for P in $(echo $PAUSERS | tr ',' ' '); do cast call $PROXY "isPauser(address)(bool)" $P --rpc-url sepolia; done
 
 cast call $UP_TL "getMinDelay()(uint256)" --rpc-url sepolia
 cast call $GOV_TL "getMinDelay()(uint256)" --rpc-url sepolia
@@ -181,8 +186,8 @@ cast call $UP_TL "hasRole(bytes32,address)(bool)" $ADMIN $DEPLOYER --rpc-url sep
 cast call $GOV_TL "hasRole(bytes32,address)(bool)" $ADMIN $DEPLOYER --rpc-url sepolia
 ```
 
-Expected: `upgrader` is `$UP_TL`, `governor` is `$GOV_TL`, `guardian` is the guardian Safe, the
-delays match `UPGRADER_DELAY` / `GOVERNOR_DELAY`, the two CANCELLER checks print `true` for the veto
+Expected: `upgrader` is `$UP_TL`, `governor` is `$GOV_TL`, `guardian` is the guardian Safe, `unpauser`
+is the unpauser Safe, every `isPauser` line prints `true`, the delays match `UPGRADER_DELAY` / `GOVERNOR_DELAY`, the two CANCELLER checks print `true` for the veto
 Safe, and the two admin checks print `false` (the temporary deploy admin was renounced). When the
 guardian is a different address from the veto Safe and from both proposer Safes, the same CANCELLER
 check with `$GUARDIAN` prints `false`. Do not proceed if anything
@@ -325,7 +330,8 @@ and run it again.
 
 ## Phase 4 - Governance rehearsal (mandatory on Sepolia)
 
-1. Instant guardian: from the guardian Safe, `pause()` and `unpause()` on the proxy (no timelock).
+1. Pause and unpause: from one pauser, `pause()` on the proxy; then from the unpauser Safe, `unpause()`.
+   Neither waits in a timelock.
 2. Governor action: a full `setPegTolerance` through the governor timelock (schedule -> wait ->
    execute), as in Phase 3.
 3. Governed upgrade: deploy a new implementation and schedule `upgradeToAndCall(newImpl, "")` on the
@@ -336,23 +342,24 @@ and run it again.
 
 These rehearsals validate the three authority paths plus the veto Safe's cancel power before mainnet.
 
-With an EOA operator (testnet quick rehearsal only), as in Phase 3: the guardian and both proposer
-Safes are the EOA whose key is `DEPLOYER_PRIVATE_KEY`.
+With an EOA operator (testnet quick rehearsal only), as in Phase 3: the guardian, the unpauser, a
+pauser and both proposer Safes are the EOA whose key is `DEPLOYER_PRIVATE_KEY`. That needs
+`PAUSERS` and `UNPAUSER_SAFE` in the env file to be that EOA's address.
 
 ```bash
 set -a; source .env.sepolia; source .deployed.sepolia; set +a
 ```
 
-### 1. Guardian pause and unpause
+### 1. Pause and unpause
 
-Pause, then check (prints `true`):
+Pause as a pauser, then check (prints `true`):
 
 ```bash
 cast send $PROXY "pause()" --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia &&
 cast call $PROXY "paused()(bool)" --rpc-url sepolia
 ```
 
-Unpause, then check (prints `false`):
+Unpause as the unpauser, then check (prints `false`):
 
 ```bash
 cast send $PROXY "unpause()" --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia &&
@@ -384,6 +391,11 @@ cast call $PROXY "pegTolerance()(uint256)" --rpc-url sepolia
 
 For a real upgrade (not this drill), bump `version()` first, per [VERSIONING.md](VERSIONING.md), so
 the check below shows the new version.
+
+Upgrading a proxy whose current implementation has the guardian pausing: the new code starts with
+no unpauser and no pausers. Queue `setUnpauser` in the governor timelock so it executes together
+with the upgrade, then have the unpauser call `setPauser` for each pauser, and do not upgrade while
+the protocol is paused. A fresh deploy needs none of this.
 
 `script/Upgrade.s.sol` calls the proxy directly, so it fails once the upgrader is a timelock. Deploy
 the implementation on its own instead, linked to the three libraries from Phase 1. This rehearsal
@@ -460,7 +472,9 @@ active on every pool, and the expected `version()`.
 ## Operational notes
 
 - The Safe operates the timelocks: each `schedule` / `execute` is a Safe transaction (Transaction
-  Builder), with its signatures. Only the guardian acts without a timelock (pauses).
+  Builder), with its signatures. The pausers, the unpauser and the guardian act without a timelock.
+  On one EOA this drill cannot show that a pauser is unable to unpause; with separate keys, try
+  `unpause()` from a pauser and confirm it reverts.
 - `execute` is open: after the delay, anyone can execute. `schedule` requires the proposer Safe.
   `cancel` can be done by the proposer Safe or the veto Safe (the veto Safe is granted CANCELLER
   on both timelocks; the guardian is not, unless it is also a proposer Safe or the veto Safe, which

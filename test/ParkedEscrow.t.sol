@@ -10,6 +10,7 @@ import {DLRS} from "../src/DLRS.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @dev Token that re-enters cancelQueue on the SAME position while the store is paying it out. Proves
 ///      the send-before-state ordering in cancelPosition cannot be exploited: the re-entrant call trips
@@ -61,6 +62,8 @@ contract ParkedEscrowTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice"); // the frozen seller
     address internal bob = makeAddr("bob"); // queued behind alice
@@ -76,7 +79,8 @@ contract ParkedEscrowTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -417,7 +421,7 @@ contract ParkedEscrowTest is Test {
 
         // The lane is still a well-formed list: a haircut walks exactly two positions.
         deal(address(pyusd), address(store), 300e6);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.prank(guardian);
         uint256 removed = store.haircutEscrow(address(pyusd), 2); // budget of exactly 2

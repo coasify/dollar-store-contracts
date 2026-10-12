@@ -8,6 +8,7 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice U2 P7: per-spoke launch caps (exposure = spoke reserve + dlrsReserve) and pool-pause
 ///         semantics (pause blocks deposits/swaps/new-queue/processQueue for that spoke, leaves LP
@@ -17,6 +18,8 @@ contract SpokeCapsAndPausesTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal pauser = makeAddr("pauser");
+    address internal unpauser = makeAddr("unpauser");
     address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -29,7 +32,8 @@ contract SpokeCapsAndPausesTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        bytes memory initData =
+            abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian, unpauser, Pausers.one(pauser)));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
 
         usdc = new MockERC20("USD Coin", "USDC", 6);
@@ -112,7 +116,7 @@ contract SpokeCapsAndPausesTest is Test {
     // ============ Pool pause: blocks ============
 
     function test_pausePool_blocksSpokeAssetDeposit() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
@@ -122,7 +126,7 @@ contract SpokeCapsAndPausesTest is Test {
     }
 
     function test_pausePool_blocksFundingDeposit() public {
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
@@ -133,7 +137,7 @@ contract SpokeCapsAndPausesTest is Test {
 
     function test_pausePool_blocksSwapsBothDirections() public {
         _depositSpokeAsset(alice, 1_000e18); // give it liquidity so it is not a no-liquidity revert
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
 
         vm.startPrank(bob);
@@ -154,7 +158,7 @@ contract SpokeCapsAndPausesTest is Test {
         store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp); // queues
         vm.stopPrank();
 
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
 
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
@@ -165,7 +169,7 @@ contract SpokeCapsAndPausesTest is Test {
 
     function test_pausePool_leavesWithdrawLive() public {
         _depositSpokeAsset(alice, 1_000e18);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
 
         vm.prank(alice);
@@ -180,7 +184,7 @@ contract SpokeCapsAndPausesTest is Test {
         uint256 id = store.getUserQueuePositions(bob)[0];
         vm.stopPrank();
 
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
 
         vm.prank(bob);
@@ -191,9 +195,9 @@ contract SpokeCapsAndPausesTest is Test {
 
     function test_unpausePool_restoresSwaps() public {
         _depositSpokeAsset(alice, 1_000e18);
-        vm.prank(guardian);
+        vm.prank(pauser);
         store.pausePool(spoke);
-        vm.prank(guardian);
+        vm.prank(unpauser);
         store.unpausePool(spoke);
 
         vm.startPrank(bob);

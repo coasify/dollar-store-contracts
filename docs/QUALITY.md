@@ -4,7 +4,7 @@ Run through this before finishing ANY change to the Solidity code. It captures t
 external audit or static analyzer will otherwise flag, so we do not re-introduce them. Seeded from the
 OpenZeppelin audit "Notes" (N-01..N-04) and expanded with the standard public auditor checklists
 (see References). Tailored to this protocol: a UUPS-upgradeable, oracle-gated, FIFO-queue stablecoin
-exchange with ERC-7201 namespaced storage and a 3-role (upgrader / governor / guardian) model.
+exchange with ERC-7201 namespaced storage and five roles (upgrader, governor, guardian, pausers, unpauser).
 
 Not every item applies to every change. Skim the categories, apply what is relevant, and do not
 regress anything already enforced.
@@ -26,8 +26,10 @@ regress anything already enforced.
 
 - Every state-changing external function has an explicit, correct access modifier (or is
   deliberately permissionless). No missing/`public` where it should be restricted.
-- Powers are split by blast radius (upgrader / governor / guardian). The fast role can only slow or
-  stop, never move funds or upgrade. Role hand-offs are two-step (`transfer*` + `accept*`).
+- Powers are split by blast radius (upgrader / governor / guardian / pausers / unpauser). The fast
+  roles can only tighten, never move funds or upgrade; lifting a pause is its own role, apart from
+  the addresses that pause. Upgrader, governor and guardian hand-offs are two-step (`transfer*` +
+  `accept*`); the governor replaces the unpauser in one step through its timelock.
 - Privileged setters emit events and validate inputs (non-zero, bounds).
 - A compromised single role cannot escalate to another (e.g. governor cannot rotate the upgrader).
 - Timelock: schedule/execute/cancel roles are wired as intended and no residual admin remains.
