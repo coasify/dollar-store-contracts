@@ -59,10 +59,43 @@ library QueueLib {
         qs.userPositions[owner].push(positionId);
     }
 
+    /// @dev Key of the line a position currently sits in: its directed queue, or the parked line.
+    function lineKey(QueueStorage.QueuePosition storage p) internal view returns (bytes32) {
+        return p.parked ? QueueStorage.parkedKey(p.offerAsset) : QueueStorage.queueKey(p.offerAsset, p.wantAsset);
+    }
+
+    /// @notice Park a queued position: unlink it from its directed queue and append it to the parked
+    ///         line for its offer asset. Escrow, ownership and `userPositions` are untouched; only the
+    ///         line bookkeeping moves. Called when a transfer to the owner fails, so the queue can
+    ///         advance past the position. Idempotent: parking an already-parked position is a no-op.
+    function park(QueueStorage.Layout storage qs, uint256 positionId) internal {
+        QueueStorage.QueuePosition storage p = qs.positions[positionId];
+        if (p.parked) return;
+        uint256 amount = p.offerAmount;
+
+        QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(p.offerAsset, p.wantAsset)];
+        _unlink(qs, p, q);
+        q.positionCount -= 1;
+        q.totalDepth -= amount;
+
+        QueueStorage.Queue storage pk = qs.queues[QueueStorage.parkedKey(p.offerAsset)];
+        p.parked = true;
+        p.prev = pk.tail;
+        p.next = 0;
+        if (pk.tail == 0) {
+            pk.head = positionId;
+        } else {
+            qs.positions[pk.tail].next = positionId;
+        }
+        pk.tail = positionId;
+        pk.positionCount += 1;
+        pk.totalDepth += amount;
+    }
+
     /// @notice Reduce a live position's amount by `delta` (partial fill). Requires delta < amount.
     function reduce(QueueStorage.Layout storage qs, uint256 positionId, uint256 delta) internal {
         QueueStorage.QueuePosition storage p = qs.positions[positionId];
-        bytes32 key = QueueStorage.queueKey(p.offerAsset, p.wantAsset);
+        bytes32 key = lineKey(p);
         p.offerAmount -= delta;
         qs.queues[key].totalDepth -= delta;
         qs.totalEscrowedByAsset[p.offerAsset] -= delta;
@@ -80,12 +113,22 @@ library QueueLib {
         owner = p.owner;
         offerAsset = p.offerAsset;
         amount = p.offerAmount;
-        address wantAsset = p.wantAsset;
 
-        bytes32 key = QueueStorage.queueKey(offerAsset, wantAsset);
-        QueueStorage.Queue storage q = qs.queues[key];
+        QueueStorage.Queue storage q = qs.queues[lineKey(p)];
+        _unlink(qs, p, q);
 
-        // Unlink from the doubly-linked list.
+        q.positionCount -= 1;
+        q.totalDepth -= amount;
+        qs.totalEscrowedByAsset[offerAsset] -= amount;
+
+        _removeUserPosition(qs, owner, positionId);
+        delete qs.positions[positionId];
+    }
+
+    /// @dev Unlink `p` from the doubly-linked list of line `q` (counters are the caller's job).
+    function _unlink(QueueStorage.Layout storage qs, QueueStorage.QueuePosition storage p, QueueStorage.Queue storage q)
+        private
+    {
         if (p.prev == 0) {
             q.head = p.next;
         } else {
@@ -96,13 +139,6 @@ library QueueLib {
         } else {
             qs.positions[p.next].prev = p.prev;
         }
-
-        q.positionCount -= 1;
-        q.totalDepth -= amount;
-        qs.totalEscrowedByAsset[offerAsset] -= amount;
-
-        _removeUserPosition(qs, owner, positionId);
-        delete qs.positions[positionId];
     }
 
     /// @dev Swap-and-pop a position id out of the owner's position array.

@@ -87,6 +87,7 @@ contract DollarStoreInvariants is StdInvariant, Test {
             if (all[i] == asset) continue;
             total += store.getQueueDepth(asset, all[i]);
         }
+        total += store.getQueueDepth(asset, address(0)); // parked escrow
         return total;
     }
 }

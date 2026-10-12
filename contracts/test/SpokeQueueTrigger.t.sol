@@ -10,8 +10,8 @@ import {DLRS} from "../src/DLRS.sol";
 import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 
-/// @notice U2 P6: deposits into a spoke settle the queues the new liquidity can fill, and the
-///         blacklist fallback is pool-aware (hub escrow -> DLRS, spoke escrow -> spoke shares).
+/// @notice U2 P6: deposits into a spoke settle the queues the new liquidity can fill, and a
+///         position whose payout fails is parked whether its escrow is a hub or a spoke asset.
 contract SpokeQueueTriggerTest is Test {
     DollarStore internal store;
     DLRS internal dlrs;
@@ -100,43 +100,54 @@ contract SpokeQueueTriggerTest is Test {
         assertEq(store.getReserve(0, address(usdc)), 500e6, "hub reserve = 1000 - 500 paid to bob");
     }
 
-    // ============ Pool-aware blacklist fallback ============
+    // ============ Failed payout during a trigger: the position is parked ============
 
-    function test_fallback_spokeEscrow_convertsToSpokeShares() public {
+    function test_trigger_spokeEscrow_isParked() public {
         // Bob queues RLUSD->USDC (escrow = spoke asset), then is blocked from receiving USDC.
         _queue(bob, rlusd, usdc, 500e18);
+        uint256 id = store.getUserQueuePositions(bob)[0];
         usdc.setBlocked(bob, true);
 
-        // Alice funds USDC -> settlement pays bob USDC, which fails -> escrow becomes spoke shares.
+        // Alice funds USDC -> settlement tries to pay bob USDC, which fails -> bob is parked.
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(bob), 1_000_000e6, "bob received no USDC (blocked)");
-        assertEq(store.getReceiptShares(spoke, bob), 500e6, "bob's escrow converted to spoke shares");
-        assertEq(store.getReserve(spoke, address(rlusd)), 500e6, "escrowed RLUSD moved into the spoke reserve");
-        assertEq(store.getQueueDepth(address(rlusd), address(usdc)), 0, "position ejected");
-        assertEq(store.getReceiptTotalShares(spoke), 1_500e6, "alice 1000 + bob 500");
-        // DLRS conservation intact (fallback did not touch the DLRS side).
-        assertEq(dlrs.totalSupply() + store.getDlrsReserve(spoke), store.getReserve(0, address(usdc)), "conservation");
+        assertEq(store.getReceiptShares(spoke, bob), 0, "bob holds no shares");
+        assertEq(store.getReserve(spoke, address(rlusd)), 0, "escrowed RLUSD is not in the pool");
+        assertEq(store.getQueueDepth(address(rlusd), address(usdc)), 0, "line advanced past bob");
+        assertEq(store.getQueueDepth(address(rlusd), address(0)), 500e6, "bob's escrow is on the parked line");
+        assertTrue(store.isQueuePositionParked(id));
+        assertEq(store.getReceiptTotalShares(spoke), 1_000e6, "alice only");
+        assertEq(store.getDlrsReserve(spoke), 1_000e6, "nothing was paid, claim intact");
+
+        // The only way out is cancel, which returns the RLUSD; the USDC block is irrelevant to it.
+        vm.prank(bob);
+        store.cancelQueue(id);
+        assertEq(rlusd.balanceOf(bob), 1_000_000e18, "escrow returned as RLUSD");
+        assertEq(store.getQueueDepth(address(rlusd), address(0)), 0);
     }
 
-    function test_fallback_hubEscrow_mintsDlrs() public {
+    function test_trigger_hubEscrow_isParked() public {
         // Bob queues USDC->RLUSD (escrow = hub asset), then is blocked from receiving RLUSD.
         _queue(bob, usdc, rlusd, 500e6);
+        uint256 id = store.getUserQueuePositions(bob)[0];
         rlusd.setBlocked(bob, true);
 
-        // Alice deposits RLUSD -> settlement pays bob RLUSD, which fails -> escrow becomes a DLRS claim.
+        // Alice deposits RLUSD -> settlement tries to pay bob RLUSD, which fails -> bob is parked.
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
         vm.stopPrank();
 
         assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob received no RLUSD (blocked)");
-        assertEq(dlrs.balanceOf(bob), 500e6, "bob's hub escrow converted to a DLRS claim");
-        assertEq(store.getReserve(0, address(usdc)), 500e6, "escrowed USDC moved into hub reserves");
-        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 0, "position ejected");
+        assertEq(dlrs.balanceOf(bob), 0, "bob holds no DLRS");
+        assertEq(store.getReserve(0, address(usdc)), 0, "escrowed USDC is not in hub reserves");
+        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 0, "line advanced past bob");
+        assertEq(store.getQueueDepth(address(usdc), address(0)), 500e6, "parked");
+        assertTrue(store.isQueuePositionParked(id));
         assertEq(store.getReserve(spoke, address(rlusd)), 1_000e6, "spoke reserve untouched (payout failed)");
     }
 

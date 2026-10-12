@@ -23,6 +23,7 @@ contract QueueStorageHarness {
     function writePosition(uint256 id, address owner, address offerAsset, address wantAsset, uint256 amount) external {
         QueueStorage.layout().positions[id] = QueueStorage.QueuePosition({
             owner: owner,
+            parked: false,
             offerAsset: offerAsset,
             wantAsset: wantAsset,
             offerAmount: amount,

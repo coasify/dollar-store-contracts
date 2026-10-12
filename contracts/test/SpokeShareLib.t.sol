@@ -17,14 +17,6 @@ contract SpokeShareLibHarness {
         return SpokeShareLib.sharesForDeposit(valueIn, poolValueBefore, totalShares);
     }
 
-    function sharesForDepositOrZero(uint256 valueIn, uint256 poolValueBefore, uint256 totalShares)
-        external
-        pure
-        returns (uint256)
-    {
-        return SpokeShareLib.sharesForDepositOrZero(valueIn, poolValueBefore, totalShares);
-    }
-
     function valueForShares(uint256 sharesIn, uint256 poolValue, uint256 totalShares) external pure returns (uint256) {
         return SpokeShareLib.valueForShares(sharesIn, poolValue, totalShares);
     }
@@ -107,34 +99,11 @@ contract SpokeShareLibTest is Test {
         assertEq(SpokeShareLib.valueForShares(40e6, impairedValue, total), 20e6, "partial burn is pro-rata of loss");
     }
 
-    // ============ sharesForDepositOrZero (fallback variant: returns 0 instead of reverting) ============
-
-    function test_sharesForDepositOrZero_zeroValue() public pure {
-        assertEq(SpokeShareLib.sharesForDepositOrZero(0, 1_000e6, 1_000e6), 0, "zero value -> 0 shares");
-    }
-
-    function test_sharesForDepositOrZero_firstLP() public pure {
-        assertEq(SpokeShareLib.sharesForDepositOrZero(1_000e6, 0, 0), 1_000e6, "first LP into empty pool is 1:1");
-    }
-
-    function test_sharesForDepositOrZero_proportional() public pure {
-        assertEq(SpokeShareLib.sharesForDepositOrZero(500e6, 1_000e6, 1_000e6), 500e6, "pro-rata against pool value");
-    }
-
-    /// @notice The whole point of the OrZero variant: extreme dust that would revert DepositTooSmall in
-    ///         sharesForDeposit returns 0 here, so the blacklist-eject fallback never bricks the queue.
-    function test_sharesForDepositOrZero_extremeDustReturnsZero() public pure {
-        // valueIn * totalShares < poolValue -> floor is 0. sharesForDeposit would revert here.
-        assertEq(SpokeShareLib.sharesForDepositOrZero(1, 1_000e6, 1), 0, "extreme dust -> 0 shares, no revert");
-    }
-
-    function testFuzz_fullyImpairedRejectsBothMintPaths(uint256 valueIn, uint256 totalShares) public {
+    function testFuzz_fullyImpairedRejectsMint(uint256 valueIn, uint256 totalShares) public {
         valueIn = bound(valueIn, 1, CAP);
         totalShares = bound(totalShares, 1, CAP);
         vm.expectRevert(SpokeShareLib.PoolFullyImpaired.selector);
         h.sharesForDeposit(valueIn, 0, totalShares);
-        vm.expectRevert(SpokeShareLib.PoolFullyImpaired.selector);
-        h.sharesForDepositOrZero(valueIn, 0, totalShares);
     }
 
     // ============ Reverts ============

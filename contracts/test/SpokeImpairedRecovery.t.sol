@@ -101,22 +101,25 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         uint256 position = store.getUserQueuePositions(bob)[0];
         rlusd.setBlocked(bob, true);
         vm.prank(bob);
-        vm.expectRevert(SpokeShareLib.PoolFullyImpaired.selector);
         store.cancelQueue(position);
-        assertEq(store.getQueueDepth(address(rlusd), address(usdc)), CAPITAL);
+        assertTrue(store.isQueuePositionParked(position));
+        assertEq(store.getQueueDepth(address(rlusd), address(usdc)), 0);
+        assertEq(store.getQueueDepth(address(rlusd), address(0)), CAPITAL);
         assertEq(store.getReceiptShares(spoke, bob), 0);
-        vm.prank(governor);
-        vm.expectPartialRevert(IDollarStore.PoolNotEmpty.selector);
-        store.removePool(spoke);
-        rlusd.setBlocked(bob, false);
-        vm.prank(bob);
-        store.cancelQueue(position);
         vm.prank(governor);
         store.removePool(spoke);
         assertEq(store.getPoolStatus(spoke), KILLED);
+        vm.prank(bob);
+        vm.expectPartialRevert(IDollarStore.EscrowTransferFailed.selector);
+        store.cancelQueue(position);
+        rlusd.setBlocked(bob, false);
+        uint256 before = rlusd.balanceOf(bob);
+        vm.prank(bob);
+        store.cancelQueue(position);
+        assertEq(rlusd.balanceOf(bob) - before, NATIVE_CAPITAL);
     }
 
-    function test_recreatedPoolReceivesEscrowConversionAndSwaps() public {
+    function test_recreatedPool_blockedCancelParksWithoutTouchingEitherPool() public {
         _impair();
         vm.prank(governor);
         store.removePool(spoke);
@@ -127,20 +130,11 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         rlusd.setBlocked(bob, true);
         vm.prank(bob);
         store.cancelQueue(position);
-        assertEq(store.getReceiptShares(fresh, bob), CAPITAL);
+        assertTrue(store.isQueuePositionParked(position));
+        assertEq(store.getReceiptShares(fresh, bob), 0);
         assertEq(store.getReceiptShares(spoke, bob), 0);
         assertEq(store.getReserve(spoke, address(rlusd)), 0);
-        assertEq(store.getReserve(fresh, address(rlusd)), CAPITAL);
-        vm.startPrank(alice);
-        usdc.approve(address(store), CAPITAL);
-        store.swap(address(usdc), address(rlusd), CAPITAL, 0, 0, block.timestamp);
-        vm.stopPrank();
-        assertEq(store.getDlrsReserve(fresh), CAPITAL);
-        assertEq(store.getDlrsReserve(spoke), 0);
-        vm.prank(bob);
-        (uint256 spokeOut, uint256 hubOut) = store.redeemSpoke(fresh, CAPITAL, block.timestamp);
-        assertEq(spokeOut, 0);
-        assertEq(hubOut, CAPITAL);
+        assertEq(store.getReserve(fresh, address(rlusd)), 0);
     }
 
     function test_incomingQueueBlocksRemoval() public {
