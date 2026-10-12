@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 /// @title NormalizationLib - Decimal normalization helpers (native <-> 6-decimal units)
 /// @notice All internal accounting is in 6-decimal normalized units; native token amounts are

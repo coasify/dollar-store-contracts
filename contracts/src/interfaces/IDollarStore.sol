@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 /// @title IDollarStore - Milestone M1 interface for DollarStore
 /// @notice Minimal surface for the upgradeable (UUPS) base + governance skeleton.
