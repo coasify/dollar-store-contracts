@@ -259,6 +259,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
         uint8 dec = IERC20Metadata(asset).decimals();
         uint64 sf = NormalizationLib.scalingFactor(dec); // reverts UnsupportedDecimals if out of range
+        // Escrow left by a removed pool must be covered before the asset holds reserves again.
+        if (IERC20(asset).balanceOf(address(this)) < QueueStorage.layout().totalEscrowedByAsset[asset] * sf) {
+            revert EscrowImpaired(asset);
+        }
 
         r.assetConfig[asset] = RegistryStorage.AssetConfig({
             poolId: 0, decimals: dec, scalingFactor: sf, priceFeed: priceFeed, listed: true, depositPaused: false

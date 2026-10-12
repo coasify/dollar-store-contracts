@@ -96,6 +96,7 @@ interface IDollarStore {
     /// @notice List a hub asset (poolId 0). Governor-gated. Freezes decimals, computes the
     ///         scaling factor, and requires a Chainlink price feed. Reverts if the asset decimals
     ///         are outside [6, 18], the feed reports more than 18 decimals, or it is already listed.
+    ///         Reverts EscrowImpaired while the contract holds less of the asset than its queue escrow.
     function addHubAsset(address asset, address priceFeed) external;
 
     /// @notice Whether an asset is listed/supported.
@@ -163,7 +164,8 @@ interface IDollarStore {
     ///         token decimals, computes the scaling factor, requires a Chainlink feed, and sets the
     ///         initial protected minimum DLRS-side reserve. Reverts if the asset is already listed (an
     ///         asset belongs to exactly one pool), decimals are outside [6,18], or the feed reports more
-    ///         than 18 decimals.
+    ///         than 18 decimals. Reverts EscrowImpaired while the contract holds less of the asset than
+    ///         its queue escrow.
     /// @return poolId The new spoke's pool id (>= 1).
     function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve) external returns (uint16 poolId);
 
@@ -173,7 +175,8 @@ interface IDollarStore {
     /// @notice Kill a spoke with zero spoke reserves and zero dlrsReserve. Worthless LP shares remain as
     ///         historical records in the retired poolId. Queued and parked positions on the spoke's lines
     ///         do not block removal; they remain cancellable by their owners and can never be filled.
-    ///         Pauses the pool and unlists its assets; governance may relist them in a fresh pool.
+    ///         Pauses the pool and unlists its assets; governance may relist them in a fresh pool once
+    ///         the contract's balance covers any escrow of the asset left behind.
     ///         Governor-gated (timelock). The hub cannot be removed, and a killed pool cannot be removed
     ///         again or unpaused.
     function removePool(uint16 poolId) external;
@@ -423,7 +426,7 @@ interface IDollarStore {
     error ReservesNotDrifted(address asset);
     /// @notice No excess (unaccounted) balance to rescue.
     error NoExcessTokens(address asset);
-    /// @notice Actual balance is below queue escrow — needs the escrow-impairment path (deferred).
+    /// @notice Actual balance is below queue escrow: haircut the escrow or restore the balance first.
     error EscrowImpaired(address asset);
 
     /// @notice Update the Chainlink price feed for a listed asset. Governor-gated (via timelock).

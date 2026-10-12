@@ -173,4 +173,7 @@ Queued and parked positions do not block removal. Queue keys are pool-scoped, so
 in the killed pool's lines can never be filled and stay cancellable by their owners. If a token
 blocks an escrow refund, the position is parked with its escrow untouched until the token allows
 the transfer. This recovery path does not bypass token restrictions.
+If the contract holds less of the asset than the positions left behind are owed, `createSpoke` and
+`addHubAsset` revert `EscrowImpaired`. Run `haircutEscrow` for the asset first (the removed pool
+stays paused, so no further pause is needed) or restore the balance, then relist.
 Killed pools cannot be unpaused or removed again, including after the asset is relisted.
