@@ -430,7 +430,7 @@ library SwapRouteLib {
 
     /// @dev Blacklist-safe fallback: convert an ejected position's escrow into its canonical receipt.
     ///      HUB escrow -> hub reserves + DLRS minted 1:1. SPOKE escrow -> that spoke's reserve + receipt
-    ///      shares minted pro-rata (U2). Never reverts.
+    ///      shares minted pro-rata (U2). Full impairment reverts, rolling back removal to preserve escrow.
     function refundEscrow(uint256 positionId, address owner_, address escrowAsset, uint256 amount) internal {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         uint16 poolId = r.assetConfig[escrowAsset].poolId;

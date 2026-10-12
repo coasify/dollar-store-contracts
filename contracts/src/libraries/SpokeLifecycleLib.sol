@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -54,18 +54,19 @@ library SpokeLifecycleLib {
         emit SpokeWindDownStarted(poolId);
     }
 
-    /// @notice Kill a fully-drained spoke (see IDollarStore.removePool).
+    /// @notice Kill a zero-reserve spoke, retaining any worthless shares as historical records (see IDollarStore.removePool).
     function removePool(uint16 poolId) external {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.Pool storage p = _spoke(r, poolId);
         if (p.dlrsReserve != 0) revert IDollarStore.PoolNotEmpty(poolId);
-        if (r.receiptTotalShares[poolId] != 0) revert IDollarStore.PoolNotEmpty(poolId);
+        if (p.status == RegistryStorage.PoolStatus.Killed) revert IDollarStore.PoolKilled(poolId);
 
         address[] storage spokeAssets = p.assets;
         address[] storage hubAssets = r.pools[0].assets;
         QueueStorage.Layout storage qs = QueueStorage.layout();
         for (uint256 i; i < spokeAssets.length; ++i) {
             address sa = spokeAssets[i];
+            if (r.assetConfig[sa].poolId != poolId) revert IDollarStore.WrongPool(sa, poolId);
             if (r.reserves[poolId][sa] != 0) revert IDollarStore.PoolNotEmpty(poolId);
             for (uint256 j; j < hubAssets.length; ++j) {
                 address ha = hubAssets[j];

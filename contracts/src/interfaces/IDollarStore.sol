@@ -90,6 +90,8 @@ interface IDollarStore {
     error AssetAlreadyListed(address asset);
     /// @notice The referenced pool does not exist.
     error InvalidPool(uint16 poolId);
+    /// @notice A killed pool cannot be removed again or unpaused.
+    error PoolKilled(uint16 poolId);
 
     /// @notice List a hub asset (poolId 0). Governor-gated. Freezes decimals, computes the
     ///         scaling factor, and requires a Chainlink price feed. Reverts if the asset decimals
@@ -150,7 +152,7 @@ interface IDollarStore {
 
     /// @notice The pool exists but is not a spoke (operation is spoke-only).
     error PoolNotSpoke(uint16 poolId);
-    /// @notice The spoke still holds reserves, DLRS-side liquidity, LP shares, or queued depth.
+    /// @notice The spoke still holds reserves, DLRS-side liquidity, or queued depth.
     error PoolNotEmpty(uint16 poolId);
     /// @notice The pool registry is full (poolId space exhausted).
     error MaxPoolsReached();
@@ -168,10 +170,10 @@ interface IDollarStore {
     /// @notice Set a spoke's protected minimum DLRS-side reserve. Governor-gated (timelock). Spoke-only.
     function setMinDlrsReserve(uint16 poolId, uint256 newMin) external;
 
-    /// @notice Remove (kill) a fully-empty spoke: requires zero spoke reserves, zero dlrsReserve, zero
-    ///         LP shares, and no queued depth on any route touching the spoke asset. Pauses the pool and
-    ///         unlists its assets. Governor-gated (timelock). The hub cannot be removed. LPs reach the
-    ///         all-zero state cleanly via `redeemSpoke`.
+    /// @notice Kill a spoke with zero spoke reserves, zero dlrsReserve, and empty queues.
+    ///         Worthless LP shares remain as historical records in the retired poolId. Pauses the pool
+    ///         and unlists its assets; governance may relist them in a fresh pool. Governor-gated.
+    ///         The hub and already-killed pools cannot be removed.
     function removePool(uint16 poolId) external;
 
     /// @notice Proportionally redeem `shares` of a spoke: pays the pro-rata slice of BOTH the spoke
@@ -414,7 +416,7 @@ interface IDollarStore {
     function unpauseDeposits(address asset) external;
     /// @notice Pause a pool (blocks inflows involving it). Guardian-gated. Exits stay open.
     function pausePool(uint16 poolId) external;
-    /// @notice Unpause a pool. Guardian-gated.
+    /// @notice Unpause a pool. Guardian-gated. Reverts if the pool is permanently killed.
     function unpausePool(uint16 poolId) external;
     /// @notice Sync recorded reserves down to the actual balance minus queue escrow, after an
     ///         external balance loss. Only decreases. Governor-gated (via timelock): it marks down
