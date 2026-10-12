@@ -3,7 +3,8 @@
 Paths are relative to the repository root, and commands run from there.
 
 Step by step to deploy DollarStore with the production topology: an **upgrader timelock**, a
-**governor timelock**, and a **guardian Safe**. The same procedure runs on Sepolia (rehearsal) and
+**governor timelock**, a **guardian Safe**, and a **veto Safe** that can cancel queued timelock
+operations. The same procedure runs on Sepolia (rehearsal) and
 mainnet (production); you only change which environment file you load. Design reference:
 [SECURITY.md](../SECURITY.md).
 
@@ -21,8 +22,10 @@ There are two deploy scripts:
 
 ## Decisions to make once
 
-- How many Safes: one shared (all three roles point at it) or up to three distinct
-  (upgrader / governor / guardian). See SECURITY.md for the trade-off.
+- How many Safes. On a testnet one address can hold everything. On mainnet the guardian must be a
+  different Safe from the veto Safe and from both proposer Safes, and the upgrader and governor
+  proposers may be one Safe or two.
+  See SECURITY.md for the trade-off.
 - Delays: short on Sepolia so the rehearsal does not wait (`UPGRADER_DELAY=60`, `GOVERNOR_DELAY=30`),
   14d (upgrader) / 7d (governor) on mainnet.
 - Initial hub assets and their Chainlink feeds. Each must meet the listing precondition in
@@ -46,7 +49,9 @@ There are two deploy scripts:
    - `DEPLOYER_PRIVATE_KEY` (with the `0x` prefix)
    - `ETHERSCAN_API_KEY`
    - `UPGRADER_SAFE` (required), `GOVERNOR_SAFE`, `GUARDIAN_SAFE` (if omitted, they default to
-     `UPGRADER_SAFE`)
+     `UPGRADER_SAFE`). On mainnet `GUARDIAN_SAFE` must be set and must differ from `UPGRADER_SAFE`,
+     `GOVERNOR_SAFE` and `VETO_SAFE`, or the deploy script refuses to run
+   - `VETO_SAFE` (required): the Safe that can cancel queued timelock operations
    - `UPGRADER_DELAY`, `GOVERNOR_DELAY` (seconds). On Sepolia use `60` and `30`; on mainnet
      `1209600` (14d) and `604800` (7d), which are also the script's defaults. The delays are fixed at
      deploy, so set them before Phase 1. Set them even when using the defaults: the `schedule`
@@ -170,15 +175,17 @@ cast call $GOV_TL "getMinDelay()(uint256)" --rpc-url sepolia
 
 CANC=$(cast call $UP_TL "CANCELLER_ROLE()(bytes32)" --rpc-url sepolia)
 ADMIN=$(cast call $UP_TL "DEFAULT_ADMIN_ROLE()(bytes32)" --rpc-url sepolia)
-cast call $UP_TL "hasRole(bytes32,address)(bool)" $CANC $GUARDIAN --rpc-url sepolia
-cast call $GOV_TL "hasRole(bytes32,address)(bool)" $CANC $GUARDIAN --rpc-url sepolia
+cast call $UP_TL "hasRole(bytes32,address)(bool)" $CANC $VETO_SAFE --rpc-url sepolia
+cast call $GOV_TL "hasRole(bytes32,address)(bool)" $CANC $VETO_SAFE --rpc-url sepolia
 cast call $UP_TL "hasRole(bytes32,address)(bool)" $ADMIN $DEPLOYER --rpc-url sepolia
 cast call $GOV_TL "hasRole(bytes32,address)(bool)" $ADMIN $DEPLOYER --rpc-url sepolia
 ```
 
 Expected: `upgrader` is `$UP_TL`, `governor` is `$GOV_TL`, `guardian` is the guardian Safe, the
-delays match `UPGRADER_DELAY` / `GOVERNOR_DELAY`, the two CANCELLER checks print `true`, and the two
-admin checks print `false` (the temporary deploy admin was renounced). Do not proceed if anything
+delays match `UPGRADER_DELAY` / `GOVERNOR_DELAY`, the two CANCELLER checks print `true` for the veto
+Safe, and the two admin checks print `false` (the temporary deploy admin was renounced). When the
+guardian is a different address from the veto Safe and from both proposer Safes, the same CANCELLER
+check with `$GUARDIAN` prints `false`. Do not proceed if anything
 does not match.
 
 ## Phase 3 - Configure the protocol (via the governor timelock)
@@ -324,10 +331,10 @@ and run it again.
 3. Governed upgrade: deploy a new implementation and schedule `upgradeToAndCall(newImpl, "")` on the
    UPGRADER timelock (schedule -> wait UPGRADER_DELAY -> execute). Confirm the new implementation is
    active and state was preserved.
-4. Guardian cancel: schedule any op on a timelock, then from the guardian Safe `cancel(id)` before
-   the delay elapses. Confirms the guardian can abort a queued op even though it is not the proposer.
+4. Veto cancel: schedule any op on a timelock, then from the veto Safe `cancel(id)` before
+   the delay elapses. Confirms the veto Safe can abort a queued op even though it is not the proposer.
 
-These rehearsals validate the three authority paths plus the guardian's cancel power before mainnet.
+These rehearsals validate the three authority paths plus the veto Safe's cancel power before mainnet.
 
 With an EOA operator (testnet quick rehearsal only), as in Phase 3: the guardian and both proposer
 Safes are the EOA whose key is `DEPLOYER_PRIVATE_KEY`.
@@ -413,7 +420,7 @@ cast call $PROXY "getLaunchCap(uint16)(uint256)" 0 --rpc-url sepolia &&
 cast call $PROXY "pegTolerance()(uint256)" --rpc-url sepolia
 ```
 
-### 4. Guardian cancel
+### 4. Veto cancel
 
 Schedule an operation, then cancel it before the delay passes. The last check prints `false` (the
 operation no longer exists):
@@ -429,9 +436,9 @@ cast send $GOV_TL "cancel(bytes32)" $ID --private-key $DEPLOYER_PRIVATE_KEY --rp
 cast call $GOV_TL "isOperation(bytes32)(bool)" $ID --rpc-url sepolia
 ```
 
-On Sepolia with one EOA this only proves the cancel path works; it cannot show that the guardian
+On Sepolia with one EOA this only proves the cancel path works; it cannot show that the veto Safe
 cancels without being the proposer, because they are the same key. With separate Safes, send the
-`cancel` from the guardian Safe.
+`cancel` from the veto Safe.
 
 ## Phase 5 - Pre-mainnet checklist and mainnet
 
@@ -455,11 +462,11 @@ active on every pool, and the expected `version()`.
 - The Safe operates the timelocks: each `schedule` / `execute` is a Safe transaction (Transaction
   Builder), with its signatures. Only the guardian acts without a timelock (pauses).
 - `execute` is open: after the delay, anyone can execute. `schedule` requires the proposer Safe.
-  `cancel` can be done by the proposer Safe or the guardian Safe (the guardian is granted CANCELLER
-  on both timelocks).
+  `cancel` can be done by the proposer Safe or the veto Safe (the veto Safe is granted CANCELLER
+  on both timelocks; the guardian is not, unless it is also a proposer Safe or the veto Safe, which
+  the script refuses on mainnet).
 - The deployer is not a lasting trust anchor: during the deploy it holds a temporary timelock admin
-  only to grant the guardian its CANCELLER role, then renounces it in the same run. The on-chain
+  only to grant the veto Safe its CANCELLER role, then renounces it in the same run. The on-chain
   roles are the timelocks/Safe from genesis.
 - Initial configuration is timelocked: listing the first assets goes through the governor timelock,
   so on mainnet it takes GOVERNOR_DELAY (7d) from the schedule. Plan it into the launch calendar.
-```

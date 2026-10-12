@@ -3,6 +3,7 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 import {DeployGovernance} from "../script/DeployGovernance.s.sol";
 import {DollarStore} from "../src/DollarStore.sol";
@@ -17,8 +18,8 @@ contract GovUpgradeMock is DollarStore {
 
 /// @notice Integration test for the production governance topology built by DeployGovernance:
 ///         upgrader timelock (operated by upgraderSafe) + governor timelock (operated by
-///         governorSafe) + guardian (guardianSafe, direct). Uses three distinct operators to
-///         also assert cross-role separation.
+///         governorSafe) + guardian (guardianSafe, direct) + veto (vetoSafe, canceller on both
+///         timelocks). Uses four distinct operators to also assert cross-role separation.
 contract DeployGovernanceTest is Test {
     DeployGovernance internal deployer;
     DollarStore internal store;
@@ -28,6 +29,7 @@ contract DeployGovernanceTest is Test {
     address internal upgraderSafe = makeAddr("upgraderSafe");
     address internal governorSafe = makeAddr("governorSafe");
     address internal guardianSafe = makeAddr("guardianSafe");
+    address internal vetoSafe = makeAddr("vetoSafe");
     address internal anyone = makeAddr("anyone");
 
     uint256 internal constant UP_DELAY = 7 days;
@@ -38,7 +40,7 @@ contract DeployGovernanceTest is Test {
         // In this test the deploy calls originate from the DeployGovernance instance, so it is the
         // one holding (and renouncing) the temporary timelock admin.
         DeployGovernance.Deployed memory d =
-            deployer.deploy(address(deployer), upgraderSafe, governorSafe, guardianSafe, UP_DELAY, GOV_DELAY);
+            deployer.deploy(address(deployer), upgraderSafe, governorSafe, guardianSafe, vetoSafe, UP_DELAY, GOV_DELAY);
         store = d.store;
         upgraderTL = d.upgraderTimelock;
         governorTL = d.governorTimelock;
@@ -66,29 +68,118 @@ contract DeployGovernanceTest is Test {
         // Cross-role separation: the governor Safe is NOT a proposer of the upgrader timelock.
         assertFalse(upgraderTL.hasRole(upgraderTL.PROPOSER_ROLE(), governorSafe), "governorSafe not upgrade proposer");
 
-        // The guardian Safe is granted CANCELLER on both timelocks.
-        assertTrue(upgraderTL.hasRole(upgraderTL.CANCELLER_ROLE(), guardianSafe), "guardian canceller (up)");
-        assertTrue(governorTL.hasRole(governorTL.CANCELLER_ROLE(), guardianSafe), "guardian canceller (gov)");
+        // The veto Safe is CANCELLER on both timelocks; the guardian is not, and the veto Safe proposes nothing.
+        assertTrue(upgraderTL.hasRole(upgraderTL.CANCELLER_ROLE(), vetoSafe), "veto canceller (up)");
+        assertTrue(governorTL.hasRole(governorTL.CANCELLER_ROLE(), vetoSafe), "veto canceller (gov)");
+        assertFalse(upgraderTL.hasRole(upgraderTL.CANCELLER_ROLE(), guardianSafe), "guardian not canceller (up)");
+        assertFalse(governorTL.hasRole(governorTL.CANCELLER_ROLE(), guardianSafe), "guardian not canceller (gov)");
+        assertFalse(upgraderTL.hasRole(upgraderTL.PROPOSER_ROLE(), vetoSafe), "veto not proposer (up)");
+        assertFalse(governorTL.hasRole(governorTL.PROPOSER_ROLE(), vetoSafe), "veto not proposer (gov)");
 
         // The temporary admin was renounced: no external admin remains.
         assertFalse(upgraderTL.hasRole(upgraderTL.DEFAULT_ADMIN_ROLE(), address(deployer)), "admin renounced (up)");
         assertFalse(governorTL.hasRole(governorTL.DEFAULT_ADMIN_ROLE(), address(deployer)), "admin renounced (gov)");
     }
 
-    function test_guardian_canCancelQueuedUpgrade() public {
+    function test_veto_canCancelQueuedUpgrade() public {
         GovUpgradeMock newImpl = new GovUpgradeMock();
         bytes memory data = abi.encodeWithSignature("upgradeToAndCall(address,bytes)", address(newImpl), "");
         bytes32 salt = bytes32(uint256(7));
         bytes32 id = upgraderTL.hashOperation(address(store), 0, data, bytes32(0), salt);
 
-        // The upgrader Safe schedules; the guardian (a different Safe) cancels it before the delay.
+        // The upgrader Safe schedules; the veto Safe (a different Safe) cancels it before the delay.
         vm.prank(upgraderSafe);
         upgraderTL.schedule(address(store), 0, data, bytes32(0), salt, UP_DELAY);
         assertTrue(upgraderTL.isOperationPending(id), "scheduled");
 
-        vm.prank(guardianSafe);
+        vm.prank(vetoSafe);
         upgraderTL.cancel(id);
-        assertFalse(upgraderTL.isOperationPending(id), "cancelled by guardian");
+        assertFalse(upgraderTL.isOperationPending(id), "cancelled by the veto Safe");
+    }
+
+    /// @notice The guardian cannot cancel the operation that replaces it, so a compromised guardian
+    ///         is removed by the governor timelock after its delay.
+    function test_guardian_cannotCancelItsOwnReplacement() public {
+        address newGuardian = makeAddr("newGuardian");
+        bytes memory data = abi.encodeCall(DollarStore.transferGuardian, (newGuardian));
+        bytes32 salt = bytes32(uint256(11));
+        bytes32 id = governorTL.hashOperation(address(store), 0, data, bytes32(0), salt);
+
+        vm.prank(guardianSafe);
+        store.pause();
+
+        vm.prank(governorSafe);
+        governorTL.schedule(address(store), 0, data, bytes32(0), salt, GOV_DELAY);
+
+        bytes32 cancellerRole = governorTL.CANCELLER_ROLE();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, guardianSafe, cancellerRole
+            )
+        );
+        vm.prank(guardianSafe);
+        governorTL.cancel(id);
+
+        vm.warp(block.timestamp + GOV_DELAY);
+        vm.prank(anyone);
+        governorTL.execute(address(store), 0, data, bytes32(0), salt);
+        vm.prank(newGuardian);
+        store.acceptGuardian();
+        assertEq(store.guardian(), newGuardian, "guardian replaced");
+
+        // The old guardian's pause is lifted by the new one.
+        vm.prank(newGuardian);
+        store.unpause();
+        assertFalse(store.paused(), "unpaused by the new guardian");
+    }
+
+    function test_veto_cannotPause() public {
+        vm.prank(vetoSafe);
+        vm.expectRevert();
+        store.pause();
+    }
+
+    function test_deploy_revertsOnZeroVetoSafe() public {
+        DeployGovernance fresh = new DeployGovernance();
+        vm.expectRevert(bytes("vetoSafe = zero"));
+        fresh.deploy(address(fresh), upgraderSafe, governorSafe, guardianSafe, address(0), UP_DELAY, GOV_DELAY);
+    }
+
+    function test_checkSeparation_mainnetRequiresGuardianApartFromEveryCanceller() public {
+        // Any other chain: one address may hold everything, for rehearsals.
+        deployer.checkSeparation(guardianSafe, guardianSafe, guardianSafe, guardianSafe);
+
+        vm.chainId(1);
+        deployer.checkSeparation(guardianSafe, vetoSafe, upgraderSafe, governorSafe);
+        // The two proposers may be one Safe.
+        deployer.checkSeparation(guardianSafe, vetoSafe, upgraderSafe, upgraderSafe);
+
+        vm.expectRevert(bytes("mainnet: VETO_SAFE must differ from GUARDIAN_SAFE"));
+        deployer.checkSeparation(guardianSafe, guardianSafe, upgraderSafe, governorSafe);
+        vm.expectRevert(bytes("mainnet: GUARDIAN_SAFE must differ from UPGRADER_SAFE"));
+        deployer.checkSeparation(guardianSafe, vetoSafe, guardianSafe, governorSafe);
+        vm.expectRevert(bytes("mainnet: GUARDIAN_SAFE must differ from GOVERNOR_SAFE"));
+        deployer.checkSeparation(guardianSafe, vetoSafe, upgraderSafe, guardianSafe);
+    }
+
+    /// @notice Why the mainnet check covers the proposers: a guardian that is also the governor's
+    ///         proposer can cancel the operation that replaces it, even with a separate veto Safe.
+    function test_guardianThatIsAProposer_canCancelItsOwnReplacement() public {
+        DeployGovernance fresh = new DeployGovernance();
+        DeployGovernance.Deployed memory d =
+            fresh.deploy(address(fresh), guardianSafe, guardianSafe, guardianSafe, vetoSafe, UP_DELAY, GOV_DELAY);
+        bytes memory data = abi.encodeCall(DollarStore.transferGuardian, (makeAddr("newGuardian")));
+        bytes32 id = d.governorTimelock.hashOperation(address(d.store), 0, data, bytes32(0), bytes32(0));
+
+        vm.startPrank(guardianSafe);
+        d.governorTimelock.schedule(address(d.store), 0, data, bytes32(0), bytes32(0), GOV_DELAY);
+        d.governorTimelock.cancel(id);
+        vm.stopPrank();
+        assertFalse(d.governorTimelock.isOperation(id), "replacement cancelled by the guardian itself");
+
+        vm.chainId(1);
+        vm.expectRevert(bytes("mainnet: GUARDIAN_SAFE must differ from UPGRADER_SAFE"));
+        fresh.checkSeparation(guardianSafe, vetoSafe, guardianSafe, guardianSafe);
     }
 
     // ============ Guardian is instant ============

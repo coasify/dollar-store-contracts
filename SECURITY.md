@@ -14,7 +14,8 @@ behind timelocks; only the fast fail-safe brakes are instant.
 |---|---|---|---|
 | **Upgrader** | TimelockController, long delay (proposed by a Safe) | Delayed (long timelock) | Replace the implementation (UUPS upgrade) |
 | **Governor** | TimelockController, short delay (proposed by a Safe) | Delayed (short timelock) | List assets, create and retire spokes, set caps and reserve floors, oracle/risk params, reserve markdown, token rescue, role transfers |
-| **Guardian** | Safe multisig | Instant | Pause / unpause, tighten caps, write queued positions down after a loss, cancel queued timelock operations |
+| **Guardian** | Safe multisig | Instant | Pause / unpause, tighten caps, write queued positions down after a loss |
+| **Veto** | Safe multisig, separate from the guardian | Instant | Cancel a queued timelock operation. Holds no role on DollarStore |
 | **Deployer** | Deploy account | One-time | Deploy + initialize, then hands off. Holds no lasting power |
 
 Each role has its own two-step transfer (`transfer*` + `accept*`), so a handoff
@@ -55,11 +56,18 @@ What sits behind each timelock (this is what makes the delays meaningful):
   is theater; the proposer must itself be a multisig.
 - **EXECUTOR** = open (`address(0)`), so execution does not depend on any single
   signer being available after the delay elapses.
-- **CANCELLER** = the guardian Safe, granted at deploy, so a malicious or mistaken queued proposal
+- **CANCELLER** = the veto Safe, granted at deploy, so a malicious or mistaken queued proposal
   can be aborted even if a proposer Safe is compromised. Each proposer Safe also keeps cancel of its
-  own queue (the OpenZeppelin constructor default).
-- **Admin** = a temporary deployer admin, used only to grant the guardian its canceller role, then
+  own queue (the OpenZeppelin constructor default). The guardian is not a canceller, as long as it is
+  a different Safe from the veto Safe and from both proposer Safes.
+- **Admin** = a temporary deployer admin, used only to grant the veto Safe its canceller role, then
   renounced in the same deploy, so no external admin remains and no one can silently reconfigure roles.
+
+The guardian Safe is a different Safe from the veto Safe and from both proposer Safes; on Ethereum
+mainnet the deploy script refuses to run if it equals any of them. A Safe that could both pause and
+cancel could cancel the governor operation that replaces it. Kept apart, a guardian that has been compromised is
+replaced through the governor timelock after its delay, and a veto Safe that has been compromised
+can block governance but cannot pause, so the protocol keeps running.
 
 The upgrader and governor can share the same proposer Safe; what is separated is
 the mechanism and the delay per class of action, and (optionally) the signer sets.
@@ -80,20 +88,15 @@ Guardian-gated functions:
   asset's pool is paused and the asset's balance is below reserves plus escrow, and it never pays
   anyone.
 
-The guardian Safe is also **CANCELLER** on both timelocks, so it can cancel any queued upgrader or
-governor operation.
-
 Rationale: the worst a compromised guardian can do is stop or slow the system: pause
-it, cancel queued governance operations, tighten caps, and, only when an asset's balance is
+it, tighten caps, and, only when an asset's balance is
 really short, write queued positions down by that shortfall. It cannot move funds, repoint the
 oracle, or upgrade, and exits and queue cancels stay open under every pause. That bounded blast
 radius is why it is allowed to act instantly.
 
 Guardian rotation is **governor-gated**, not guardian-gated: a guardian cannot hand the role to
-another address. Rotation goes through the governor timelock, and the outgoing guardian Safe keeps
-CANCELLER on both timelocks until a timelocked `revokeRole` removes it. Because a canceller can
-cancel those operations too, replacing a guardian Safe that has been compromised depends on its
-signers; choose them accordingly.
+another address. Rotation goes through the governor timelock, and a guardian that is apart from the
+veto Safe and the proposer Safes cannot cancel it.
 
 ## Deployer (transient)
 
