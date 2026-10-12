@@ -51,7 +51,6 @@ A USDS mock was added. The USDC and USDT mocks were reused as they were.
 All three mocks are verified on Etherscan. To verify the USDC and USDT mocks again without redeploying:
 
 ```bash
-cd contracts
 set -a; source .env.sepolia; set +a
 
 forge verify-contract 0x0a9479f7aff770965b3b2D28b29E40C3F6168588 \

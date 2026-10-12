@@ -1,6 +1,6 @@
 # Deploy runbook
 
-Paths are relative to `contracts/`, and commands run from there.
+Paths are relative to the repository root, and commands run from there.
 
 Step by step to deploy DollarStore with the production topology: an **upgrader timelock**, a
 **governor timelock**, and a **guardian Safe**. The same procedure runs on Sepolia (rehearsal) and
@@ -64,8 +64,6 @@ There are two deploy scripts:
 A helper script is provided to automate compilation and deployment inside a Linux-based Docker container:
 
 ```bash
-cd contracts
-
 # Remove build output from the host first, so the container compiles from source.
 forge clean
 
@@ -81,8 +79,6 @@ forge clean
 You pick the network here: (a) which env file you load, and (b) which `--rpc-url` you target. They must match.
 
 ```bash
-cd contracts
-
 # Load the network environment. IMPORTANT: `set -a` EXPORTS the variables to the forge process.
 # A plain `source` sets them as shell variables but does NOT export them, so forge would not see them.
 set -a; source .env.sepolia; set +a        # or: source .env.mainnet
@@ -97,8 +93,8 @@ forge script script/DeployGovernance.s.sol:DeployGovernance \
 
 ### After either option: record the addresses
 
-Both options write the same broadcast file under `contracts/broadcast/` (the Docker container works
-in your `contracts/` folder). Record these addresses: `DollarStore proxy`, `DollarStore implementation`, `SpokeAdminLib`,
+Both options write the same broadcast file under `broadcast/` (the Docker container works
+in the repository folder). Record these addresses: `DollarStore proxy`, `DollarStore implementation`, `SpokeAdminLib`,
 `SpokeLifecycleLib`, `SwapRouteLib`, `DLRS token`, `upgrader timelock`, `governor timelock`. You will
 use them in every later phase. The logs print only some of them, so write all of them to a
 `.deployed.sepolia` file (gitignored) that the later phases load. The implementation and the
@@ -207,7 +203,7 @@ to the same timelock `execute(...)` (execution is open, anyone can execute).
 
 With an EOA operator (testnet quick rehearsal only). The governor Safe in your env file is the EOA
 whose key signs the schedule; any funded key can execute. On Sepolia, use the test tokens and the
-`$1` test feed listed in [deployments/sepolia.md](../contracts/deployments/sepolia.md).
+`$1` test feed listed in [deployments/sepolia.md](../deployments/sepolia.md).
 
 Load both files into this terminal, then set the asset to list and its feed:
 
@@ -282,7 +278,7 @@ Optionally create a spoke pool. A spoke holds one asset outside the hub, paired 
 reserve funded from the hub. The asset must not already be listed (an asset belongs to one pool).
 `MIN_DLRS` is the protected minimum DLRS-side reserve, in 6-decimal units, that swaps cannot take the
 spoke below; 0 means no floor. On Sepolia, use the mock USDS (18 decimals) from
-[deployments/sepolia.md](../contracts/deployments/sepolia.md). Schedule:
+[deployments/sepolia.md](../deployments/sepolia.md). Schedule:
 
 ```bash
 SPOKE=<spoke asset>;  SPOKE_FEED=<spoke/usd feed>;  MIN_DLRS=0

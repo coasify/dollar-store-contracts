@@ -2,7 +2,7 @@
 
 DollarStore is an on-chain exchange for USD stablecoins. Users deposit a listed stablecoin, receive a receipt for it, and swap one listed stablecoin for another one-for-one. Swaps that cannot be filled immediately wait in a queue and are paid in order as liquidity arrives. The protocol charges no fee, holds no discretion over prices, and never consults one token's issuer about another's token.
 
-This document describes the protocol as implemented in `contracts/src/`. It is written for someone reading the contracts: an integrator, an auditor, or an issuer's risk team. Roles, timelocks, and the emergency playbook are in [SECURITY.md](../SECURITY.md); building and testing are in [README.md](../contracts/README.md); deployment is in [DEPLOY.md](DEPLOY.md).
+This document describes the protocol as implemented in `src/`. It is written for someone reading the contracts: an integrator, an auditor, or an issuer's risk team. Roles, timelocks, and the emergency playbook are in [SECURITY.md](../SECURITY.md); building and testing are in [README.md](../README.md); deployment is in [DEPLOY.md](DEPLOY.md).
 
 - Solidity 0.8.24, [Foundry](https://book.getfoundry.sh/), OpenZeppelin 5.6, UUPS proxy with ERC-7201 namespaced storage.
 - Amounts in this document are in normalized 6-decimal units unless a native token amount is stated. A listed token may have 6 to 18 decimals; the contract scales every amount to 6 decimals internally and back on the way out.

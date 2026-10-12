@@ -2,7 +2,7 @@
 """Fail if src/ line coverage from lcov.info is below the threshold.
 
 Usage: run `forge coverage --report lcov --ir-minimum` first (writes lcov.info),
-then `python3 ci/coverage_gate.py`. Adjust THRESHOLD as the suite matures.
+then `python3 .github/scripts/coverage_gate.py`. Adjust THRESHOLD as the suite matures.
 """
 import sys
 
