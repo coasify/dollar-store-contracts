@@ -618,6 +618,17 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
+    function swapSpokeToSpoke(
+        address offerAsset,
+        address wantAsset,
+        address[] calldata via,
+        uint256 amount,
+        uint256 deadline
+    ) external override nonReentrant whenNotPaused returns (uint256 amountOut) {
+        return SwapRouteLib.swapSpokeToSpoke(offerAsset, wantAsset, via, amount, deadline);
+    }
+
+    /// @inheritdoc IDollarStore
     /// @dev Exit path: not blocked by pause. Returns the escrowed offer. If the transfer fails, a
     ///      queued position is parked and a parked one reverts. Body in SwapRouteLib.
     function cancelQueue(uint256 positionId) external override nonReentrant {

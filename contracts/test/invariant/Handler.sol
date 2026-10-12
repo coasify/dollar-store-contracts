@@ -2,14 +2,17 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 import {DollarStore} from "../../src/DollarStore.sol";
 import {DLRS} from "../../src/DLRS.sol";
+import {IDollarStore} from "../../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
 /// @notice Invariant handler: bounded, randomized hub + spoke actions against DollarStore. Reverts are
 ///         swallowed (fail_on_revert = false) so the fuzzer explores freely while the invariant
-///         assertions run between calls. Hub assets are 6dp; the spoke asset (rlusd) is 18dp.
+///         assertions run between calls. Hub assets are 6dp; spoke A's asset (rlusd) is 18dp and spoke
+///         B's (xusd) is 6dp. Spoke B stays active so spoke-to-spoke swaps always have a live partner.
 /// @dev Does NOT call impairment paths (syncReserves / haircut / deal) - those intentionally break
 ///      backing conservation and are covered by unit tests. The spoke lifecycle IS exercised: the spoke
 ///      can be wound down, retired, and its asset listed again as a new spoke, so positions of several
@@ -28,8 +31,13 @@ contract Handler is Test {
     address[] internal actors;
     uint256[] internal positionIds; // every queue position the handler created (one per queued swap)
 
+    MockERC20 internal xusd;
+    uint16 public spokeB;
+
     uint256 public removals; // successful removePool calls
     uint256 public relists; // successful createSpoke calls after a removal
+    uint256 public s2sFills; // successful swapSpokeToSpoke calls
+    uint256 public s2sSplits; // of which routed through more than one hub asset
 
     uint256 internal constant MAX_AMOUNT = 1_000_000e6; // hub assets (6dp)
     uint256 internal constant MAX_AMOUNT_18 = 1_000_000e18; // spoke asset (18dp)
@@ -55,6 +63,13 @@ contract Handler is Test {
         feed = _feed;
         governor = _governor;
         actors = _actors;
+    }
+
+    /// @dev One-time setup. The fuzzer calls every external function, so a second call is ignored.
+    function setSpokeB(MockERC20 _xusd, uint16 _spokeB) external {
+        if (address(xusd) != address(0)) return;
+        xusd = _xusd;
+        spokeB = _spokeB;
     }
 
     function allSpokeIds() external view returns (uint16[] memory) {
@@ -181,16 +196,107 @@ contract Handler is Test {
         vm.stopPrank();
     }
 
+    // ============ Spoke B and spoke-to-spoke ============
+
+    function depositSpokeB(uint256 actorSeed, uint256 amount) external {
+        address actor = _actor(actorSeed);
+        amount = bound(amount, 0, MAX_AMOUNT);
+        xusd.mint(actor, amount);
+        vm.startPrank(actor);
+        xusd.approve(address(store), amount);
+        try store.deposit(spokeB, address(xusd), amount, type(uint256).max) {} catch {}
+        vm.stopPrank();
+    }
+
+    function fundSpokeB(uint256 actorSeed, bool useUsdc, uint256 amount) external {
+        address actor = _actor(actorSeed);
+        MockERC20 t = useUsdc ? usdc : usdt;
+        amount = bound(amount, 0, MAX_AMOUNT);
+        t.mint(actor, amount);
+        vm.startPrank(actor);
+        t.approve(address(store), amount);
+        try store.deposit(spokeB, address(t), amount, type(uint256).max) {} catch {}
+        vm.stopPrank();
+    }
+
+    function withdrawSpokeB(uint256 actorSeed, uint256 shares) external {
+        address actor = _actor(actorSeed);
+        shares = bound(shares, 0, store.getReceiptShares(spokeB, actor));
+        vm.startPrank(actor);
+        try store.withdraw(spokeB, shares, type(uint256).max) {} catch {}
+        vm.stopPrank();
+    }
+
+    /// @dev Hub <-> spoke B swaps, in either direction, so spoke-to-spoke legs meet queued positions.
+    function swapHubSpokeB(uint256 actorSeed, bool useUsdc, bool toSpoke, uint256 amount) external {
+        address actor = _actor(actorSeed);
+        MockERC20 hub = useUsdc ? usdc : usdt;
+        (MockERC20 offer, MockERC20 want) = toSpoke ? (hub, xusd) : (xusd, hub);
+        amount = bound(amount, 0, MAX_AMOUNT);
+        offer.mint(actor, amount);
+        vm.startPrank(actor);
+        offer.approve(address(store), amount);
+        try store.swap(address(offer), address(want), amount, 0, 0, type(uint256).max) returns (
+            uint256, uint256 queued
+        ) {
+            _trackQueued(actor, queued);
+        } catch {}
+        vm.stopPrank();
+    }
+
+    /// @dev Spoke A <-> spoke B through one of six hub-asset lists: each single asset, both orders of
+    ///      the split, and each asset repeated.
+    function swapSpokeToSpoke(uint256 actorSeed, bool aToB, uint256 viaSeed, uint256 amount) external {
+        if (!store.isAssetListed(address(rlusd))) this.relistSpoke(); // keep a partner for spoke B
+        address actor = _actor(actorSeed);
+        (MockERC20 offer, MockERC20 want) = aToB ? (rlusd, xusd) : (xusd, rlusd);
+        uint256 v = viaSeed % 6;
+        address[] memory via = new address[](v < 2 ? 1 : 2);
+        via[0] = v == 1 || v == 3 || v == 5 ? address(usdt) : address(usdc);
+        if (via.length == 2) via[1] = v == 2 || v == 5 ? address(usdt) : address(usdc);
+        // Fill-or-revert, so size to what both spokes can fill from reserves; queues and the per-asset
+        // hub limit can still make it revert.
+        (uint16 from, uint16 to) = aToB ? (spokeId, spokeB) : (spokeB, spokeId);
+        uint256 claim = store.getDlrsReserve(from);
+        uint256 floor = store.getMinDlrsReserve(from);
+        uint256 room = claim > floor ? claim - floor : 0;
+        uint256 held = store.getReserve(to, address(want));
+        if (held < room) room = held;
+        if (via.length == 1 && store.getReserve(0, via[0]) < room) room = store.getReserve(0, via[0]);
+        uint256 unit = aToB ? 1e12 : 1;
+        amount = bound(amount, unit, (room == 0 ? MAX_AMOUNT : room) * unit);
+        offer.mint(actor, amount);
+        vm.startPrank(actor);
+        offer.approve(address(store), amount);
+        vm.recordLogs();
+        try store.swapSpokeToSpoke(address(offer), address(want), via, amount, type(uint256).max) {
+            s2sFills += 1;
+            if (_routedCount() > 1) s2sSplits += 1;
+        } catch {}
+        vm.stopPrank();
+    }
+
+    function _routedCount() internal returns (uint256 n) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IDollarStore.SpokeSwapRouted.selector) n++;
+        }
+    }
+
     // ============ Spoke lifecycle ============
 
-    function windDown() external {
+    /// @dev Acts on one call in four, so most runs keep spoke A active long enough to trade.
+    function windDown(uint256 seed) external {
+        if (seed % 4 != 0) return;
         vm.prank(governor);
         try store.windDownSpoke(spokeId) {} catch {}
     }
 
     /// @dev Every LP redeems in full, then governance removes the pool. Any step may fail; removal
     ///      succeeds only when the spoke is fully drained, and dust from rounding can keep it alive.
-    function retireSpoke() external {
+    ///      Acts on one call in four, like windDown.
+    function retireSpoke(uint256 seed) external {
+        if (seed % 4 != 0) return;
         for (uint256 i; i < actors.length; ++i) {
             uint256 shares = store.getReceiptShares(spokeId, actors[i]);
             if (shares == 0) continue;
@@ -231,13 +337,17 @@ contract Handler is Test {
         maxPositions = bound(maxPositions, 0, 50);
         address offer;
         address want;
-        uint256 r = routeSeed % 6;
+        uint256 r = routeSeed % 10;
         if (r == 0) (offer, want) = (address(usdc), address(usdt));
         else if (r == 1) (offer, want) = (address(usdt), address(usdc));
         else if (r == 2) (offer, want) = (address(rlusd), address(usdc));
         else if (r == 3) (offer, want) = (address(usdc), address(rlusd));
         else if (r == 4) (offer, want) = (address(rlusd), address(usdt));
-        else (offer, want) = (address(usdt), address(rlusd));
+        else if (r == 5) (offer, want) = (address(usdt), address(rlusd));
+        else if (r == 6) (offer, want) = (address(xusd), address(usdc));
+        else if (r == 7) (offer, want) = (address(usdc), address(xusd));
+        else if (r == 8) (offer, want) = (address(xusd), address(usdt));
+        else (offer, want) = (address(usdt), address(xusd));
         try store.processQueue(offer, want, maxPositions) {} catch {}
     }
 }

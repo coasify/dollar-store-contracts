@@ -12,8 +12,9 @@ import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockAggregatorV3} from "../mocks/MockAggregatorV3.sol";
 import {Handler} from "./Handler.sol";
 
-/// @notice Core protocol invariants under randomized hub + spoke sequences, including the spoke being
-///         retired and its asset listed again as a new pool.
+/// @notice Core protocol invariants under randomized hub + spoke sequences, including spoke A being
+///         retired and its asset listed again as a new pool, and spoke-to-spoke swaps between spoke A and
+///         an always-active spoke B.
 ///   1. DLRS backing conservation: total DLRS supply + sum of every spoke's dlrsReserve == sum of hub
 ///      reserves. (Queue escrow is NOT backing; spoke assets never back the hub.)
 ///   2. Solvency: the contract's token balance covers reserves + queue escrow for every asset.
@@ -29,11 +30,13 @@ contract DollarStoreInvariants is StdInvariant, Test {
     DLRS internal dlrs;
     MockERC20 internal usdc;
     MockERC20 internal usdt;
-    MockERC20 internal rlusd; // 18dp spoke asset
+    MockERC20 internal rlusd; // 18dp spoke A asset
+    MockERC20 internal xusd; // 6dp spoke B asset
     MockAggregatorV3 internal feed;
     Handler internal handler;
 
     uint16 internal spoke;
+    uint16 internal spokeB;
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
@@ -48,12 +51,14 @@ contract DollarStoreInvariants is StdInvariant, Test {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         usdt = new MockERC20("Tether", "USDT", 6);
         rlusd = new MockERC20("Ripple USD", "RLUSD", 18);
+        xusd = new MockERC20("Spoke B", "XUSD", 6);
         feed = new MockAggregatorV3(8, 1e8); // $1, fresh
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usdt), address(feed));
         spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spokeB = store.createSpoke(address(xusd), address(feed), 0);
         vm.stopPrank();
 
         address[] memory actors = new address[](3);
@@ -62,6 +67,7 @@ contract DollarStoreInvariants is StdInvariant, Test {
         actors[2] = makeAddr("carol");
 
         handler = new Handler(store, dlrs, usdc, usdt, rlusd, spoke, address(feed), governor, actors);
+        handler.setSpokeB(xusd, spokeB);
         targetContract(address(handler));
     }
 
@@ -69,7 +75,7 @@ contract DollarStoreInvariants is StdInvariant, Test {
     ///         backed 1:1 by hub reserves. Queue escrow and spoke-asset reserves are NOT part of this.
     function invariant_dlrsBackingConservation() public view {
         uint256 hubReserves = store.getReserve(0, address(usdc)) + store.getReserve(0, address(usdt));
-        uint256 dlrsClaims = dlrs.totalSupply();
+        uint256 dlrsClaims = dlrs.totalSupply() + store.getDlrsReserve(spokeB);
         uint16[] memory spokes = handler.allSpokeIds();
         for (uint256 i; i < spokes.length; ++i) {
             dlrsClaims += store.getDlrsReserve(spokes[i]);
@@ -82,18 +88,19 @@ contract DollarStoreInvariants is StdInvariant, Test {
         _assertSolvent(usdc, 1); // 6dp -> scaling 1
         _assertSolvent(usdt, 1);
         _assertSolvent(rlusd, 1e12); // 18dp -> scaling 1e12
+        _assertSolvent(xusd, 1);
     }
 
     /// @notice The per-asset escrow total the contract keeps equals the sum of its positions.
     function invariant_escrowTotalMatchesPositions() public view {
-        address[3] memory all = [address(usdc), address(usdt), address(rlusd)];
+        address[4] memory all = [address(usdc), address(usdt), address(rlusd), address(xusd)];
         for (uint256 i; i < all.length; ++i) {
             assertEq(_escrowTotal(all[i]), _positionEscrow(all[i]), "totalEscrowedByAsset == sum of positions");
         }
     }
 
     /// @notice Every line's depth and count equal the positions in it: both hub-to-hub lines, the four
-    ///         hub<->spoke lines of every spoke generation, and the three parked lines.
+    ///         hub<->spoke lines of every spoke A generation and of spoke B, and the four parked lines.
     function invariant_linesMatchPositions() public view {
         _assertLine(QueueStorage.queueKey(address(usdc), address(usdt), 0), address(usdc), address(usdt), 0);
         _assertLine(QueueStorage.queueKey(address(usdt), address(usdc), 0), address(usdt), address(usdc), 0);
@@ -105,7 +112,11 @@ contract DollarStoreInvariants is StdInvariant, Test {
             _assertLine(QueueStorage.queueKey(address(rlusd), address(usdc), g), address(rlusd), address(usdc), g);
             _assertLine(QueueStorage.queueKey(address(rlusd), address(usdt), g), address(rlusd), address(usdt), g);
         }
-        address[3] memory all = [address(usdc), address(usdt), address(rlusd)];
+        _assertLine(QueueStorage.queueKey(address(usdc), address(xusd), spokeB), address(usdc), address(xusd), spokeB);
+        _assertLine(QueueStorage.queueKey(address(usdt), address(xusd), spokeB), address(usdt), address(xusd), spokeB);
+        _assertLine(QueueStorage.queueKey(address(xusd), address(usdc), spokeB), address(xusd), address(usdc), spokeB);
+        _assertLine(QueueStorage.queueKey(address(xusd), address(usdt), spokeB), address(xusd), address(usdt), spokeB);
+        address[4] memory all = [address(usdc), address(usdt), address(rlusd), address(xusd)];
         for (uint256 i; i < all.length; ++i) {
             _assertLine(QueueStorage.parkedKey(all[i]), all[i], address(0), 0);
         }
@@ -133,7 +144,7 @@ contract DollarStoreInvariants is StdInvariant, Test {
     ///         made those actions always fail would leave the invariants above passing vacuously.
     function test_handler_reachesASecondGeneration() public {
         handler.swapHubToSpoke(0, true, 500e6); // no RLUSD in the spoke: queued in generation 1
-        handler.retireSpoke();
+        handler.retireSpoke(0);
         handler.relistSpoke();
         handler.swapHubToSpoke(1, true, 500e6); // queued in generation 2
 
@@ -151,11 +162,35 @@ contract DollarStoreInvariants is StdInvariant, Test {
         assertEq(pool2, spokes[1], "second position in the new pool");
     }
 
+    /// @notice Guards the spoke-to-spoke coverage: the handler's actions produce fills from reserves,
+    ///         a split across both hub assets, and fills that meet queued positions on spoke B.
+    function test_handler_reachesSpokeToSpoke() public {
+        handler.fundSpoke(0, true, 1_000e6); // spoke A claim, hub USDC 1,000
+        handler.fundSpoke(0, false, 500e6); // spoke A claim, hub USDT 500
+        handler.depositSpokeB(1, 2_000e6);
+
+        handler.swapSpokeToSpoke(2, true, 0, 400e18); // via [USDC], from reserves
+        handler.swapSpokeToSpoke(2, true, 2, 1_100e18); // via [USDC, USDT], split
+        assertEq(handler.s2sFills(), 2, "both filled");
+        assertEq(handler.s2sSplits(), 1, "one split");
+
+        // Spoke B's claim is 1,500 but the hub holds only 500 USDT: 500 fills, 500 queues on spoke B.
+        handler.swapHubSpokeB(1, false, false, 1_000e6);
+        assertEq(store.getQueueDepth(address(xusd), address(usdt)), 500e6, "spoke B seller queued");
+
+        handler.fundSpoke(0, false, 200e6); // spoke A claim again, hub USDT 200
+        handler.swapSpokeToSpoke(2, true, 1, 100e18); // via [USDT]: second leg pays the queued seller
+        assertEq(store.getQueueDepth(address(xusd), address(usdt)), 400e6, "seller partly filled");
+        assertEq(handler.s2sFills(), 3, "filled against the queue");
+    }
+
     // ============ Helpers ============
 
     function _assertSolvent(MockERC20 asset, uint256 scaling) internal view {
         uint256 reserves;
-        if (address(asset) == address(rlusd)) {
+        if (address(asset) == address(xusd)) {
+            reserves = store.getReserve(spokeB, address(asset));
+        } else if (address(asset) == address(rlusd)) {
             uint16[] memory spokes = handler.allSpokeIds();
             for (uint256 i; i < spokes.length; ++i) {
                 reserves += store.getReserve(spokes[i], address(asset));

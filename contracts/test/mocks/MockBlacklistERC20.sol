@@ -11,6 +11,7 @@ contract MockBlacklistERC20 is ERC20 {
     uint8 private immutable _decimals;
 
     mapping(address => bool) public blocked;
+    mapping(address => bool) public blockedSender;
 
     constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
         _decimals = decimals_;
@@ -34,8 +35,14 @@ contract MockBlacklistERC20 is ERC20 {
         blocked[account] = value;
     }
 
+    /// @notice Toggle whether transfers FROM `account` revert.
+    function setBlockedSender(address account, bool value) external {
+        blockedSender[account] = value;
+    }
+
     function _update(address from, address to, uint256 value) internal override {
         require(!blocked[to], "blocked");
+        require(!blockedSender[from], "blocked sender");
         super._update(from, to, value);
     }
 }

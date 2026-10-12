@@ -29,7 +29,7 @@ library SwapRouteLib {
     /// @dev Max positions settled inline from reserves per directed queue in a single call.
     uint256 private constant MAX_INLINE_SETTLE = 8;
 
-    /// @dev The three supported swap routes. Spoke-to-spoke is rejected (done as two hub-legged swaps).
+    /// @dev The three single-leg swap routes. Spoke-to-spoke runs as two legs (swapSpokeToSpoke).
     enum RouteKind {
         HubToHub,
         HubToSpoke,
@@ -54,6 +54,7 @@ library SwapRouteLib {
         uint256 amountFilled,
         uint256 amountQueued
     );
+    event SpokeSwapRouted(address indexed user, address indexed via, uint256 amount);
     event QueueJoined(
         uint256 indexed positionId,
         address indexed owner,
@@ -164,6 +165,55 @@ library SwapRouteLib {
         }
         if (current == 0) filled += available;
         return NormalizationLib.toNative(filled < units ? filled : units, route.wantScaling);
+    }
+
+    /// @notice All-or-nothing spoke-to-spoke swap through the hub assets `via`, in order: for each, a
+    ///         spoke->hub leg fills what it can under the normal rules and a hub->spoke leg pays it out.
+    ///         The whole amount fills or the call reverts. Never queues (see IDollarStore.swapSpokeToSpoke).
+    /// @dev A hub asset received in leg one never leaves the contract unless leg two pays it to an
+    ///      opposite-queue owner. Leg two absorbs it into hub reserves, so every `via` is inflow-gated.
+    function swapSpokeToSpoke(
+        address offerAsset,
+        address wantAsset,
+        address[] calldata via,
+        uint256 amount,
+        uint256 deadline
+    ) external returns (uint256 amountOut) {
+        if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
+        if (offerAsset == wantAsset) revert IDollarStore.SameAsset();
+        if (via.length == 0) revert IDollarStore.InvalidRoute(offerAsset, wantAsset);
+
+        Route[] memory sell = new Route[](via.length);
+        Route[] memory buy = new Route[](via.length);
+        for (uint256 i; i < via.length; ++i) {
+            sell[i] = validateRoute(offerAsset, via[i]);
+            buy[i] = validateRoute(via[i], wantAsset);
+            if (sell[i].kind != RouteKind.SpokeToHub || buy[i].kind != RouteKind.HubToSpoke) {
+                revert IDollarStore.InvalidRoute(offerAsset, wantAsset);
+            }
+            PegLib.checkInflow(via[i]);
+        }
+        PegLib.checkInflow(offerAsset);
+
+        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, sell[0].offerScaling);
+        if (amountUnits == 0) revert IDollarStore.ZeroAmount();
+
+        pullExact(offerAsset, nativePulled);
+
+        uint256 remaining = amountUnits;
+        for (uint256 i; i < via.length && remaining > 0; ++i) {
+            uint256 got = fillDirected(sell[i], offerAsset, via[i], remaining, true);
+            if (got == 0) continue;
+            uint256 paid = fillDirected(buy[i], via[i], wantAsset, got, true);
+            if (paid < got) revert IDollarStore.InsufficientLiquidity(amountUnits - remaining + paid, amountUnits);
+            remaining -= got;
+            emit SpokeSwapRouted(msg.sender, via[i], got);
+        }
+        if (remaining > 0) revert IDollarStore.InsufficientLiquidity(amountUnits - remaining, amountUnits);
+
+        amountOut = NormalizationLib.toNative(amountUnits, buy[0].wantScaling);
+        IERC20(wantAsset).safeTransfer(msg.sender, amountOut);
+        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, amountUnits, 0);
     }
 
     /// @notice Settle the (offerAsset -> wantAsset) queue from reserves in FIFO order, bounded by
