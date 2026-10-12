@@ -109,6 +109,7 @@ library SpokeLifecycleLib {
         address[] storage hubAssets = r.pools[0].assets;
         bool assetIsHub = cfg.poolId == 0;
         uint256 poolLen = r.pools.length;
+        // Pool ids fit in uint16: createSpoke caps the pool count.
         for (uint256 pid; pid < poolLen; ++pid) {
             if (pid == 0) {
                 if (!assetIsHub) continue;
@@ -124,9 +125,11 @@ library SpokeLifecycleLib {
             address sa = passets[0]; // a spoke has exactly one spoke asset
             if (sa == asset) {
                 for (uint256 a; a < hubAssets.length; ++a) {
+                    // forge-lint: disable-next-line(unsafe-typecast)
                     budget = _haircutQueue(qs, asset, hubAssets[a], uint16(pid), targetEscrow, escrow, budget);
                 }
             } else if (assetIsHub) {
+                // forge-lint: disable-next-line(unsafe-typecast)
                 budget = _haircutQueue(qs, asset, sa, uint16(pid), targetEscrow, escrow, budget);
             }
         }

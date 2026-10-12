@@ -40,6 +40,8 @@ library QueueLib {
         QueueStorage.QueuePosition storage p = qs.positions[positionId];
         p.owner = owner;
         p.poolId = poolId;
+        // An owner's position count cannot reach 2 ** 64.
+        // forge-lint: disable-next-line(unsafe-typecast)
         p.userIndex = uint64(qs.userPositions[owner].length);
         p.offerAsset = offerAsset;
         p.wantAsset = wantAsset;
@@ -153,6 +155,8 @@ library QueueLib {
         if (index != last) {
             uint256 moved = arr[last];
             arr[index] = moved;
+            // index is below the owner's position count, which cannot reach 2 ** 64.
+            // forge-lint: disable-next-line(unsafe-typecast)
             qs.positions[moved].userIndex = uint64(index);
         }
         arr.pop();

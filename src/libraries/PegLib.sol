@@ -38,6 +38,8 @@ library PegLib {
         if (feed == address(0)) revert IDollarStore.NoPriceFeed(asset);
 
         AggregatorV3Interface agg = AggregatorV3Interface(feed);
+        // The round's start time is not needed.
+        // forge-lint: disable-next-line(unused-return)
         (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = agg.latestRoundData();
         if (answer <= 0) revert IDollarStore.InvalidPrice(asset);
         if (answeredInRound < roundId) revert IDollarStore.StaleRound(asset);
@@ -46,6 +48,8 @@ library PegLib {
         if (block.timestamp - updatedAt > c.maxStaleness) revert IDollarStore.PriceStale(asset, updatedAt);
 
         uint256 scale = 10 ** (PRICE_DECIMALS - uint256(agg.decimals()));
+        // answer > 0 is checked above.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 normalized = uint256(answer) * scale;
         uint256 lower = ONE - (ONE * c.pegTolerance / BPS_DENOMINATOR);
         uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
@@ -77,6 +81,8 @@ library PegLib {
             if (block.timestamp - updatedAt > c.maxStaleness) return false;
 
             uint256 scale = 10 ** (PRICE_DECIMALS - uint256(AggregatorV3Interface(feed).decimals()));
+            // answer > 0 is checked above.
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint256 normalized = uint256(answer) * scale;
             uint256 lower = ONE - (ONE * c.pegTolerance / BPS_DENOMINATOR);
             uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
