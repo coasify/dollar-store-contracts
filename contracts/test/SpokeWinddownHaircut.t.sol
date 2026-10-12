@@ -180,7 +180,7 @@ contract SpokeWinddownHaircutTest is Test {
         assertEq(removed, 400e6, "40% haircut removed");
         assertEq(store.getQueueDepth(address(rlusd), address(usdc)), 600e6, "escrow reduced to surviving balance");
         // Solvency restored: reserves(0) + escrow(600) == actual(600).
-        (,,, uint256 amt,) = store.getQueuePosition(store.getUserQueuePositions(bob)[0]);
+        (,,, uint256 amt,,) = store.getQueuePosition(store.getUserQueuePositions(bob)[0]);
         assertEq(amt, 600e6, "bob's position haircut pro-rata");
     }
 
@@ -259,11 +259,31 @@ contract SpokeWinddownHaircutTest is Test {
         store.haircutEscrow(address(rlusd), 10);
     }
 
-    function test_removePool_revertsWhenQueueDepthNonZero() public {
-        // A queued spoke->hub position leaves escrow (not reserves/shares) on the spoke's route.
+    function test_removePool_withQueuedPosition_killsAndPositionStaysCancellable() public {
+        // A queued spoke->hub position leaves escrow (not reserves/shares) on the spoke's lines. Since
+        // queue keys are pool-scoped, that escrow cannot hold the spoke open.
         _queueSpokeToHub(alice, 1_000e18);
+        uint256 id = store.getUserQueuePositions(alice)[0];
         vm.prank(governor);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolNotEmpty.selector, spoke));
+        store.removePool(spoke);
+        assertEq(store.getPoolStatus(spoke), 2, "killed");
+        assertFalse(store.isAssetListed(address(rlusd)), "unlisted");
+
+        // The tombstone's position is untouched and its owner can still take the escrow back.
+        (address owner,,, uint256 amt,,) = store.getQueuePosition(id);
+        assertEq(owner, alice);
+        assertEq(amt, 1_000e6);
+        uint256 before = rlusd.balanceOf(alice);
+        vm.prank(alice);
+        store.cancelQueue(id);
+        assertEq(rlusd.balanceOf(alice) - before, 1_000e18, "escrow returned");
+
+        // A killed pool cannot be unpaused or removed again.
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolKilled.selector, spoke));
+        store.unpausePool(spoke);
+        vm.prank(governor);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolKilled.selector, spoke));
         store.removePool(spoke);
     }
 

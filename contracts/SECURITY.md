@@ -162,14 +162,15 @@ deployment. Please do not disclose publicly until a fix has been deployed.
 ## Fully impaired spoke recovery (0.9.5-U2)
 
 When recorded spoke reserves and DLRS-side reserves are zero but receipt shares remain,
-`PoolFullyImpaired` rejects deposits. Governance can retire
-the pool with `removePool` once all its queues are empty. Outstanding worthless shares remain
+`PoolFullyImpaired` rejects deposits. Governance can retire the pool with `removePool` once
+its spoke reserve and DLRS-side reserve are zero. Outstanding worthless shares remain
 recorded under the permanently killed poolId; they do not claim reserves in a replacement pool.
 Governance can then call `createSpoke` for the same asset, which receives a fresh poolId and
 starts with zero shares. Update integrations that cache poolIds to use the new asset registration.
-No storage migration or holder enumeration is required. Removal still scans the hub routes.
+No storage migration or holder enumeration is required.
 
-Cancel outstanding positions before removal. If a token blocks an escrow refund, the position
-is parked with its escrow untouched; parked escrow does not block removal, and its owner can
-cancel once the token allows the transfer. This recovery path does not bypass token restrictions.
+Queued and parked positions do not block removal. Queue keys are pool-scoped, so positions left
+in the killed pool's lines can never be filled and stay cancellable by their owners. If a token
+blocks an escrow refund, the position is parked with its escrow untouched until the token allows
+the transfer. This recovery path does not bypass token restrictions.
 Killed pools cannot be unpaused or removed again, including after the asset is relisted.

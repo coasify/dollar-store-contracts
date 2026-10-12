@@ -301,17 +301,18 @@ contract HubSwapFallbackTest is Test {
         _swap(alice, usdc, usdt, 1_000e6, 0);
         uint256 id = store.getUserQueuePositions(alice)[0];
 
-        (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp) =
+        (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp, uint16 poolId) =
             store.getQueuePosition(id);
         assertEq(owner, alice, "owner");
         assertEq(offerAsset, address(usdc), "offerAsset");
         assertEq(wantAsset, address(usdt), "wantAsset");
         assertEq(amount, 1_000e6, "amount");
         assertEq(timestamp, block.timestamp, "timestamp");
+        assertEq(poolId, 0, "hub-to-hub lines live in pool 0");
     }
 
     function test_view_getQueuePosition_zeroForMissing() public view {
-        (address owner,,, uint256 amount,) = store.getQueuePosition(999);
+        (address owner,,, uint256 amount,,) = store.getQueuePosition(999);
         assertEq(owner, address(0), "missing -> zero owner");
         assertEq(amount, 0, "missing -> zero amount");
     }

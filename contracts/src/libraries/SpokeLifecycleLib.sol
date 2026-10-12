@@ -55,26 +55,22 @@ library SpokeLifecycleLib {
     }
 
     /// @notice Kill a zero-reserve spoke, retaining any worthless shares as historical records (see IDollarStore.removePool).
-    /// @dev Parked escrow of the spoke asset does not block removal: it is outside every directed queue
-    ///      and outside the pool. Afterwards it stays cancellable by its owner and subject to haircutEscrow.
+    /// @dev Queue lines are not required to be empty. Keys are pool-scoped, so a tombstone's leftover
+    ///      positions can never be reached through a replacement pool: they stay cancellable by their
+    ///      owners (cancelQueue does not route-validate) and can never be filled (the asset is unlisted,
+    ///      so no route touches them). Parked escrow of the spoke asset is likewise outside the pool.
+    ///      Both stay subject to haircutEscrow afterwards.
     function removePool(uint16 poolId) external {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.Pool storage p = _spoke(r, poolId);
-        if (p.dlrsReserve != 0) revert IDollarStore.PoolNotEmpty(poolId);
         if (p.status == RegistryStorage.PoolStatus.Killed) revert IDollarStore.PoolKilled(poolId);
+        if (p.dlrsReserve != 0) revert IDollarStore.PoolNotEmpty(poolId);
 
         address[] storage spokeAssets = p.assets;
-        address[] storage hubAssets = r.pools[0].assets;
-        QueueStorage.Layout storage qs = QueueStorage.layout();
         for (uint256 i; i < spokeAssets.length; ++i) {
             address sa = spokeAssets[i];
             if (r.assetConfig[sa].poolId != poolId) revert IDollarStore.WrongPool(sa, poolId);
             if (r.reserves[poolId][sa] != 0) revert IDollarStore.PoolNotEmpty(poolId);
-            for (uint256 j; j < hubAssets.length; ++j) {
-                address ha = hubAssets[j];
-                if (qs.queues[QueueStorage.queueKey(sa, ha)].totalDepth != 0) revert IDollarStore.PoolNotEmpty(poolId);
-                if (qs.queues[QueueStorage.queueKey(ha, sa)].totalDepth != 0) revert IDollarStore.PoolNotEmpty(poolId);
-            }
             r.assetConfig[sa].listed = false;
         }
 
@@ -89,7 +85,7 @@ library SpokeLifecycleLib {
         RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
         QueueStorage.Layout storage qs = QueueStorage.layout();
         uint256 escrow = qs.totalEscrowedByAsset[asset];
-        // A removed spoke's asset is unlisted but can still carry parked escrow, which shares a loss
+        // A removed spoke's asset is unlisted but can still carry queued or parked escrow, which shares a loss
         // like any other escrow; its pool is left paused by removal.
         if (!cfg.listed && escrow == 0) revert IDollarStore.AssetNotListed(asset);
         if (!r.pools[cfg.poolId].paused) revert IDollarStore.PoolNotPaused(cfg.poolId);
@@ -101,18 +97,36 @@ library SpokeLifecycleLib {
 
         uint256 targetEscrow = actualUnits > reserves ? actualUnits - reserves : 0;
 
+        // Walk every line that offers `asset`, keyed by the pool it belongs to. Hub-to-hub lines live in
+        // pool 0; each spoke pool owns its own hub<->spoke lines. A killed pool whose asset was relisted
+        // has distinct lines from its replacement, so each line is visited once.
         uint256 budget = maxPositions;
+        address[] storage hubAssets = r.pools[0].assets;
+        bool assetIsHub = cfg.poolId == 0;
         uint256 poolLen = r.pools.length;
         for (uint256 pid; pid < poolLen; ++pid) {
+            if (pid == 0) {
+                if (!assetIsHub) continue;
+                for (uint256 a; a < hubAssets.length; ++a) {
+                    address want = hubAssets[a];
+                    if (want == asset) continue;
+                    budget = _haircutQueue(qs, asset, want, 0, targetEscrow, escrow, budget);
+                }
+                continue;
+            }
             address[] storage passets = r.pools[pid].assets;
-            for (uint256 a; a < passets.length; ++a) {
-                address want = passets[a];
-                if (want == asset) continue;
-                budget = _haircutQueue(qs, asset, want, targetEscrow, escrow, budget);
+            if (passets.length == 0) continue;
+            address sa = passets[0]; // a spoke has exactly one spoke asset
+            if (sa == asset) {
+                for (uint256 a; a < hubAssets.length; ++a) {
+                    budget = _haircutQueue(qs, asset, hubAssets[a], uint16(pid), targetEscrow, escrow, budget);
+                }
+            } else if (assetIsHub) {
+                budget = _haircutQueue(qs, asset, sa, uint16(pid), targetEscrow, escrow, budget);
             }
         }
         // Parked positions hold escrow of `asset` too and share the loss pro-rata like any other line.
-        budget = _haircutQueue(qs, asset, address(0), targetEscrow, escrow, budget);
+        budget = _haircutQueue(qs, asset, address(0), 0, targetEscrow, escrow, budget);
 
         uint256 newEscrow = qs.totalEscrowedByAsset[asset];
         removedUnits = escrow - newEscrow;
@@ -123,11 +137,12 @@ library SpokeLifecycleLib {
         QueueStorage.Layout storage qs,
         address offerAsset,
         address wantAsset,
+        uint16 poolId,
         uint256 targetEscrow,
         uint256 escrow,
         uint256 budget
     ) private returns (uint256) {
-        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;
+        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, poolId)].head;
         while (current != 0) {
             if (budget == 0) revert IDollarStore.HaircutBudgetExceeded();
             QueueStorage.QueuePosition storage p = qs.positions[current];

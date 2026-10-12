@@ -100,7 +100,7 @@ interface IDollarStore {
 
     /// @notice Whether an asset is listed/supported.
     function isAssetListed(address asset) external view returns (bool);
-    /// @notice Frozen decimals of a listed asset (0 if not listed).
+    /// @notice Frozen decimals of an asset, kept after its pool is removed (0 if never listed).
     function assetDecimals(address asset) external view returns (uint8);
     /// @notice Scaling factor 10**(decimals-6) of a listed asset.
     function assetScalingFactor(address asset) external view returns (uint64);
@@ -152,7 +152,7 @@ interface IDollarStore {
 
     /// @notice The pool exists but is not a spoke (operation is spoke-only).
     error PoolNotSpoke(uint16 poolId);
-    /// @notice The spoke still holds reserves, DLRS-side liquidity, or queued depth.
+    /// @notice The spoke still holds reserves or DLRS-side liquidity.
     error PoolNotEmpty(uint16 poolId);
     /// @notice The pool registry is full (poolId space exhausted).
     error MaxPoolsReached();
@@ -170,11 +170,12 @@ interface IDollarStore {
     /// @notice Set a spoke's protected minimum DLRS-side reserve. Governor-gated (timelock). Spoke-only.
     function setMinDlrsReserve(uint16 poolId, uint256 newMin) external;
 
-    /// @notice Kill a spoke with zero spoke reserves, zero dlrsReserve, and empty queues.
-    ///         Worthless LP shares remain as historical records in the retired poolId. Pauses the pool
-    ///         and unlists its assets; governance may relist them in a fresh pool. Governor-gated.
-    ///         The hub and already-killed pools cannot be removed. Parked escrow of the spoke asset does
-    ///         not block removal; afterwards it stays cancellable and subject to haircutEscrow.
+    /// @notice Kill a spoke with zero spoke reserves and zero dlrsReserve. Worthless LP shares remain as
+    ///         historical records in the retired poolId. Queued and parked positions on the spoke's lines
+    ///         do not block removal; they remain cancellable by their owners and can never be filled.
+    ///         Pauses the pool and unlists its assets; governance may relist them in a fresh pool.
+    ///         Governor-gated (timelock). The hub cannot be removed, and a killed pool cannot be removed
+    ///         again or unpaused.
     function removePool(uint16 poolId) external;
 
     /// @notice Proportionally redeem `shares` of a spoke: pays the pro-rata slice of BOTH the spoke
@@ -226,7 +227,8 @@ interface IDollarStore {
     ///         asset (actual token balance < accounted reserves + escrow), so the escrow accounting
     ///         matches the surviving balance. Only while the asset's pool is paused. Iterates the queues
     ///         where `asset` is the offer, including the parked line, bounded by `maxPositions` (reverts
-    ///         if exceeded). A removed spoke's asset is accepted while it still carries parked escrow.
+    ///         if exceeded). A removed spoke's asset is accepted while positions of it remain, queued
+    ///         or parked.
     /// @return removedUnits The normalized 6dp escrow removed by the haircut.
     function haircutEscrow(address asset, uint256 maxPositions) external returns (uint256 removedUnits);
 
@@ -284,9 +286,14 @@ interface IDollarStore {
         uint256 amountFilled,
         uint256 amountQueued
     );
-    /// @notice Emitted when a new queue position is created.
+    /// @notice Emitted when a new queue position is created. `poolId` is the pool whose lines it joins.
     event QueueJoined(
-        uint256 indexed positionId, address indexed owner, address offerAsset, address wantAsset, uint256 amount
+        uint256 indexed positionId,
+        address indexed owner,
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
+        uint16 poolId
     );
     /// @notice Emitted when a queued position is filled (partially or fully).
     event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
@@ -360,19 +367,25 @@ interface IDollarStore {
         external
         returns (uint256 positionsProcessed, uint256 amountFilled);
 
-    /// @notice Total escrowed depth of the (offerAsset -> wantAsset) queue (normalized 6dp).
+    /// @notice Total escrowed depth of the (offerAsset -> wantAsset) queue (normalized 6dp), in the pool
+    ///         the pair currently routes through. Zero if either asset is not listed, so lines of a
+    ///         removed pool are never reported. `wantAsset == address(0)` returns the parked escrow of
+    ///         `offerAsset`, listed or not.
     function getQueueDepth(address offerAsset, address wantAsset) external view returns (uint256);
-    /// @notice Details of a queue position (zeros if it does not exist).
+    /// @notice Details of a queue position (zeros if it does not exist). `poolId` is the pool it was
+    ///         queued in: the spoke pool for a hub<->spoke pair, 0 for hub-to-hub. It does not change
+    ///         when the position is parked or the pool is removed.
     function getQueuePosition(uint256 positionId)
         external
         view
-        returns (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp);
+        returns (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp, uint16 poolId);
     /// @notice All position ids owned by a user (queued and parked).
     function getUserQueuePositions(address user) external view returns (uint256[] memory);
     /// @notice Whether a position is parked (see QueueParked). getQueueDepth(asset, address(0)) is the
     ///         total parked escrow of `asset`.
     function isQueuePositionParked(uint256 positionId) external view returns (bool);
-    /// @notice Current minimum order size to queue into the (offerAsset -> wantAsset) queue.
+    /// @notice Current minimum order size to queue into the (offerAsset -> wantAsset) queue, in the pool
+    ///         the pair currently routes through. The base minimum if either asset is not listed.
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view returns (uint256);
     /// @notice Instantly fillable amount for a swap (normalized 6dp), respecting FIFO availability
     ///         (returns 0 for a same-direction pair that already has a non-empty queue).

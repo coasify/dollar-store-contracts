@@ -137,12 +137,17 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         assertEq(store.getReserve(fresh, address(rlusd)), 0);
     }
 
-    function test_incomingQueueBlocksRemoval() public {
+    function test_incomingQueueDoesNotBlockRemoval() public {
         _impair();
         _queue(bob, usdc, rlusd, CAPITAL);
+        uint256 position = store.getUserQueuePositions(bob)[0];
         vm.prank(governor);
-        vm.expectPartialRevert(IDollarStore.PoolNotEmpty.selector);
         store.removePool(spoke);
+        assertEq(store.getPoolStatus(spoke), KILLED);
+        uint256 before = usdc.balanceOf(bob);
+        vm.prank(bob);
+        store.cancelQueue(position);
+        assertEq(usdc.balanceOf(bob) - before, CAPITAL);
     }
 
     function test_residualSpokeReserveBlocksRemoval() public {
