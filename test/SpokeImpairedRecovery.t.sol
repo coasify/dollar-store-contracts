@@ -38,7 +38,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         assertEq(store.getReceiptTotalShares(spoke), CAPITAL);
 
         vm.prank(governor);
-        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0, 0);
         assertGt(fresh, spoke);
         vm.startPrank(bob);
         rlusd.approve(address(store), units * SCALE);
@@ -120,7 +120,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         vm.prank(governor);
         store.removePool(spoke);
         vm.prank(governor);
-        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0, 0);
         _queue(bob, rlusd, usdc, NATIVE_CAPITAL);
         uint256 position = store.getUserQueuePositions(bob)[0];
         rlusd.setBlocked(bob, true);

@@ -173,12 +173,15 @@ interface IDollarStore {
 
     /// @notice Create a spoke pool for `spokeAsset`. Governor-gated (timelock). Reads and freezes the
     ///         token decimals, computes the scaling factor, requires a Chainlink feed, and sets the
-    ///         initial protected minimum DLRS-side reserve. Reverts if the asset is already listed (an
-    ///         asset belongs to exactly one pool), decimals are outside [6,18], or the feed reports more
-    ///         than 18 decimals. Reverts EscrowImpaired while the contract holds less of the asset than
-    ///         its queue escrow.
+    ///         initial protected minimum DLRS-side reserve and the launch cap (normalized 6dp units; 0 means
+    ///         no cap). The cap is set in the same call, so it never depends on a pool id chosen in advance.
+    ///         Reverts if the asset is already listed (an asset belongs to exactly one pool), decimals are
+    ///         outside [6,18], or the feed reports more than 18 decimals. Reverts EscrowImpaired while the
+    ///         contract holds less of the asset than its queue escrow.
     /// @return poolId The new spoke's pool id (>= 1).
-    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve) external returns (uint16 poolId);
+    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve, uint256 launchCap)
+        external
+        returns (uint16 poolId);
 
     /// @notice Set a spoke's minimum DLRS-side reserve. Governor-gated (timelock). Spoke-only. The floor
     ///         bounds spoke->hub SWAPS only: LP exits are senior to it and may take the claim below it.

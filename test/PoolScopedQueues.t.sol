@@ -56,7 +56,7 @@ contract PoolScopedQueuesTest is Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usdt), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         address[4] memory who = [lp, alice, carol, dave];
@@ -93,7 +93,7 @@ contract PoolScopedQueuesTest is Test {
     function _removeAndRelist() internal returns (uint16 spoke2) {
         vm.startPrank(governor);
         store.removePool(spoke);
-        spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke2 = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
         assertEq(spoke2, spoke + 1, "fresh pool id");
     }
@@ -306,7 +306,7 @@ contract PoolScopedQueuesTest is Test {
         _removeWithShortEscrow();
         vm.startPrank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
-        store.createSpoke(address(rlusd), address(feed), 0);
+        store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
         store.addHubAsset(address(rlusd), address(feed));
         vm.stopPrank();
@@ -317,7 +317,7 @@ contract PoolScopedQueuesTest is Test {
         vm.prank(guardian);
         store.haircutEscrow(address(rlusd), 1);
         vm.prank(governor);
-        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0, 0);
         _newLpIsWholeAfterOldCancel(spoke2, id, 250e18);
     }
 
@@ -327,11 +327,11 @@ contract PoolScopedQueuesTest is Test {
         rlusd.mint(address(store), 250e18 - 1);
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
-        store.createSpoke(address(rlusd), address(feed), 0);
+        store.createSpoke(address(rlusd), address(feed), 0, 0);
 
         rlusd.mint(address(store), 1);
         vm.prank(governor);
-        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0, 0);
         _newLpIsWholeAfterOldCancel(spoke2, id, 500e18);
     }
 

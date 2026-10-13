@@ -471,7 +471,7 @@ contract PauseRolesTest is Test {
     function test_unpausingWindingDownSpoke_doesNotReopenDeposits() public {
         MockERC20 rlusd = new MockERC20("Ripple USD", "RLUSD", 18);
         vm.startPrank(governor);
-        uint16 spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         store.windDownSpoke(spoke);
         vm.stopPrank();
 

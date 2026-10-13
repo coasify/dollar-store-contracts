@@ -61,8 +61,8 @@ contract DollarStoreInvariants is StdInvariant, Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usdt), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
-        spokeB = store.createSpoke(address(xusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
+        spokeB = store.createSpoke(address(xusd), address(feed), 0, 0);
         vm.stopPrank();
 
         address[] memory actors = new address[](3);

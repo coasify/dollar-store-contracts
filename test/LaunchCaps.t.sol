@@ -207,10 +207,9 @@ contract LaunchCapsTest is Test {
 
     // ============ Listing a capped spoke in one governor operation ============
 
-    /// @notice A spoke must never exist uncapped, not even for a block. `setLaunchCap` takes a poolId,
-    ///         which only exists once `createSpoke` has run, so the deploy script queues the two calls
-    ///         as one timelock batch against the id the new pool is about to get. This is that batch.
-    function test_batchedCreateSpokeAndCapLandTogether() public {
+    /// @notice The governor creates a spoke and caps it in one call, so the cap never names a pool id
+    ///         chosen in advance. This is that call, through a timelock.
+    function test_createSpoke_withCap_throughTheTimelock() public {
         address[] memory proposers = new address[](1);
         proposers[0] = address(this);
         address[] memory executors = new address[](1);
@@ -231,21 +230,15 @@ contract LaunchCapsTest is Test {
         uint16 expectedPoolId = uint16(timelocked.poolCount());
         uint256 cap = 250_000e6;
 
-        address[] memory targets = new address[](2);
-        uint256[] memory values = new uint256[](2);
-        bytes[] memory payloads = new bytes[](2);
-        targets[0] = address(timelocked);
-        payloads[0] = abi.encodeCall(DollarStore.createSpoke, (address(spokeAsset), address(feed), 150_000e6));
-        targets[1] = address(timelocked);
-        payloads[1] = abi.encodeCall(DollarStore.setLaunchCap, (expectedPoolId, cap));
-
-        governorTL.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(0), 2 days);
+        bytes memory data =
+            abi.encodeCall(DollarStore.createSpoke, (address(spokeAsset), address(feed), 150_000e6, cap));
+        governorTL.schedule(address(timelocked), 0, data, bytes32(0), bytes32(0), 2 days);
         vm.warp(block.timestamp + 2 days);
-        governorTL.executeBatch(targets, values, payloads, bytes32(0), bytes32(0));
+        governorTL.execute(address(timelocked), 0, data, bytes32(0), bytes32(0));
         feed.setUpdatedAt(block.timestamp); // the timelock wait aged the mock answer past maxStaleness
 
         assertEq(timelocked.assetPoolId(address(spokeAsset)), expectedPoolId, "spoke listed at the expected id");
-        assertEq(timelocked.getLaunchCap(expectedPoolId), cap, "cap applied in the same operation");
+        assertEq(timelocked.getLaunchCap(expectedPoolId), cap, "cap applied in the same call");
         assertEq(timelocked.getMinDlrsReserve(expectedPoolId), 150_000e6, "floor set at creation");
 
         // And the cap bites: a deposit over it reverts rather than growing the pool past the limit.

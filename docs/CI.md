@@ -58,7 +58,8 @@ matures. Coverage uses `--ir-minimum` because the project builds with `via_ir = 
   - Core / governance: governance/upgrade (`DollarStore.t.sol`), storage-slot guards and round-trips
     (`CoreStorage.t.sol`, `QueueStorage.t.sol`, `RegistryStorage.t.sol`), asset registry
     (`AssetRegistry.t.sol`), risk controls (`RiskControls.t.sol`), the pause and unpause roles
-    (`PauseRoles.t.sol`), and launch caps (`LaunchCaps.t.sol`).
+    (`PauseRoles.t.sol`), launch caps (`LaunchCaps.t.sol`), and spokes created with a cap through the
+    timelock (`CreateSpoke.t.sol`).
   - Libraries: decimal normalization (`NormalizationLib.t.sol`), queue mechanics (`QueueLib.t.sol`),
     and spoke-share accounting (`SpokeShareLib.t.sol`).
   - Token: DLRS soulbound / mint-burn authority (`DLRS.t.sol`).

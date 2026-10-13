@@ -50,7 +50,7 @@ contract SpokeLifecycleTest is Test {
 
     function _createRlusdSpoke(uint256 minDlrs) internal returns (uint16 poolId) {
         vm.prank(governor);
-        poolId = store.createSpoke(address(rlusd), address(feed), minDlrs);
+        poolId = store.createSpoke(address(rlusd), address(feed), minDlrs, 0);
     }
 
     // ============ createSpoke ============
@@ -82,13 +82,13 @@ contract SpokeLifecycleTest is Test {
     function test_createSpoke_onlyGovernor() public {
         vm.prank(stranger);
         vm.expectRevert(IDollarStore.OnlyGovernor.selector);
-        store.createSpoke(address(rlusd), address(feed), 0);
+        store.createSpoke(address(rlusd), address(feed), 0, 0);
     }
 
     function test_createSpoke_revertsIfAssetAlreadyHub() public {
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetAlreadyListed.selector, address(usdc)));
-        store.createSpoke(address(usdc), address(feed), 0);
+        store.createSpoke(address(usdc), address(feed), 0, 0);
     }
 
     function test_addHubAsset_revertsIfAssetAlreadySpoke() public {
@@ -102,15 +102,15 @@ contract SpokeLifecycleTest is Test {
         _createRlusdSpoke(0);
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetAlreadyListed.selector, address(rlusd)));
-        store.createSpoke(address(rlusd), address(feed), 0);
+        store.createSpoke(address(rlusd), address(feed), 0, 0);
     }
 
     function test_createSpoke_revertsZeroAddress() public {
         vm.startPrank(governor);
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
-        store.createSpoke(address(0), address(feed), 0);
+        store.createSpoke(address(0), address(feed), 0, 0);
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
-        store.createSpoke(address(rlusd), address(0), 0);
+        store.createSpoke(address(rlusd), address(0), 0, 0);
         vm.stopPrank();
     }
 
@@ -118,14 +118,14 @@ contract SpokeLifecycleTest is Test {
         MockAggregatorV3 badFeed = new MockAggregatorV3(19, 1e19);
         vm.prank(governor);
         vm.expectRevert();
-        store.createSpoke(address(rlusd), address(badFeed), 0);
+        store.createSpoke(address(rlusd), address(badFeed), 0, 0);
     }
 
     function test_createSpoke_secondSpokeGetsNextId() public {
         _createRlusdSpoke(0);
         MockERC20 pyusd = new MockERC20("PayPal USD", "PYUSD", 6);
         vm.prank(governor);
-        uint16 poolId = store.createSpoke(address(pyusd), address(feed), 500e6);
+        uint16 poolId = store.createSpoke(address(pyusd), address(feed), 500e6, 0);
         assertEq(poolId, 2, "second spoke is poolId 2");
         assertEq(store.poolCount(), 3, "hub + two spokes");
     }
@@ -182,7 +182,7 @@ contract SpokeLifecycleTest is Test {
 
         // The asset is free again; recreating gives a fresh poolId (the killed pool is a tombstone).
         vm.prank(governor);
-        uint16 poolId = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 poolId = store.createSpoke(address(rlusd), address(feed), 0, 0);
         assertEq(poolId, 2, "recreated spoke gets a new id");
         assertTrue(store.isAssetListed(address(rlusd)), "listed again");
         assertEq(store.assetPoolId(address(rlusd)), 2, "canonical pool updated");

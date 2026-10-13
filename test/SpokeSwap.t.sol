@@ -46,7 +46,7 @@ contract SpokeSwapTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         for (uint256 i; i < 3; i++) {
@@ -168,7 +168,7 @@ contract SpokeSwapTest is Test {
     function test_spokeToSpoke_rejected() public {
         MockERC20 pyusd = new MockERC20("PayPal USD", "PYUSD", 6);
         vm.prank(governor);
-        store.createSpoke(address(pyusd), address(feed), 0);
+        store.createSpoke(address(pyusd), address(feed), 0, 0);
 
         vm.startPrank(bob);
         rlusd.approve(address(store), 1_000e18);
@@ -207,7 +207,7 @@ contract SpokeSwapTest is Test {
     function test_getSwapQuote_spokeToSpoke_zero() public {
         MockERC20 pyusd = new MockERC20("PayPal USD", "PYUSD", 6);
         vm.prank(governor);
-        store.createSpoke(address(pyusd), address(feed), 0);
+        store.createSpoke(address(pyusd), address(feed), 0, 0);
         assertEq(store.getSwapQuote(address(rlusd), address(pyusd), 1_000e18), 0, "spoke->spoke not quotable");
     }
 

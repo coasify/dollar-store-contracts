@@ -21,106 +21,67 @@ import {DollarStore} from "../src/DollarStore.sol";
 ///      - SPOKE_FEED (required): its Chainlink price feed.
 ///      - SPOKE_MIN_DLRS (optional): initial protected minimum DLRS-side reserve (6dp). Default 0.
 ///      - SPOKE_LAUNCH_CAP (optional, 6dp): launch exposure cap for the new spoke. Default 0 (no cap).
-///        When set, the operation becomes a BATCH of createSpoke + setLaunchCap, so the spoke can never
-///        exist uncapped: both land in the same transaction or neither does. `setLaunchCap` takes a
-///        poolId, which only exists after `createSpoke` runs, so the batch targets the id the new pool
-///        will get (the current `poolCount`). If another pool is created between scheduling and
-///        execution that id would belong to someone else, so `execute` refuses when `poolCount` has
-///        moved. Re-schedule in that case.
+///        `createSpoke` sets it in the same call, so the operation names no pool id and any number of
+///        spokes can be queued in one waiting period and executed in any order.
 ///      - SALT (optional): timelock operation salt. Default 0. Must match between schedule and execute.
 ///      - ACTION (optional): "schedule" (default) or "execute".
 contract CreateSpoke is Script {
-    function _params()
-        internal
-        view
-        returns (
-            address store,
-            TimelockController tl,
-            address[] memory targets,
-            uint256[] memory values,
-            bytes[] memory payloads,
-            uint256 delay,
-            bytes32 salt,
-            uint16 expectedPoolId
-        )
-    {
-        store = vm.envAddress("STORE_PROXY");
-        tl = TimelockController(payable(vm.envAddress("GOVERNOR_TIMELOCK")));
-        address spokeAsset = vm.envAddress("SPOKE_ASSET");
-        address priceFeed = vm.envAddress("SPOKE_FEED");
-        uint256 minDlrs = vm.envOr("SPOKE_MIN_DLRS", uint256(0));
-        uint256 launchCap = vm.envOr("SPOKE_LAUNCH_CAP", uint256(0));
-        delay = tl.getMinDelay();
-        salt = bytes32(vm.envOr("SALT", uint256(0)));
-        expectedPoolId = uint16(DollarStore(store).poolCount());
+    /// @notice What one run needs. `fromEnv` fills it from the environment.
+    struct Params {
+        uint256 key;
+        address store;
+        TimelockController tl;
+        address spokeAsset;
+        address priceFeed;
+        uint256 minDlrs;
+        uint256 launchCap;
+        bytes32 salt;
+    }
 
-        uint256 steps = launchCap == 0 ? 1 : 2;
-        targets = new address[](steps);
-        values = new uint256[](steps);
-        payloads = new bytes[](steps);
+    function fromEnv() public view returns (Params memory p) {
+        p.key = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        p.store = vm.envAddress("STORE_PROXY");
+        p.tl = TimelockController(payable(vm.envAddress("GOVERNOR_TIMELOCK")));
+        p.spokeAsset = vm.envAddress("SPOKE_ASSET");
+        p.priceFeed = vm.envAddress("SPOKE_FEED");
+        p.minDlrs = vm.envOr("SPOKE_MIN_DLRS", uint256(0));
+        p.launchCap = vm.envOr("SPOKE_LAUNCH_CAP", uint256(0));
+        p.salt = bytes32(vm.envOr("SALT", uint256(0)));
+    }
 
-        targets[0] = store;
-        payloads[0] = abi.encodeCall(DollarStore.createSpoke, (spokeAsset, priceFeed, minDlrs));
-        if (launchCap != 0) {
-            targets[1] = store;
-            payloads[1] = abi.encodeCall(DollarStore.setLaunchCap, (expectedPoolId, launchCap));
-        }
+    /// @notice The governor call that creates the spoke with its launch cap.
+    function payload(Params memory p) public pure returns (bytes memory) {
+        return abi.encodeCall(DollarStore.createSpoke, (p.spokeAsset, p.priceFeed, p.minDlrs, p.launchCap));
     }
 
     /// @notice Queue the operation on the governor timelock (proposer key required).
-    function schedule() public {
-        (
-            address store,
-            TimelockController tl,
-            address[] memory targets,
-            uint256[] memory values,
-            bytes[] memory payloads,
-            uint256 delay,
-            bytes32 salt,
-            uint16 expectedPoolId
-        ) = _params();
-        uint256 key = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        vm.startBroadcast(key);
-        tl.scheduleBatch(targets, values, payloads, bytes32(0), salt, delay);
+    function schedule(Params memory p) public {
+        bytes memory data = payload(p);
+        uint256 delay = p.tl.getMinDelay();
+        vm.startBroadcast(p.key);
+        p.tl.schedule(p.store, 0, data, bytes32(0), p.salt, delay);
         vm.stopBroadcast();
-        console2.log("scheduled createSpoke on:", store);
-        console2.log("steps in the batch:      ", targets.length); // 2 when a launch cap is set
-        console2.log("expected new poolId:     ", expectedPoolId);
+        console2.log("scheduled createSpoke on:", p.store);
+        console2.log("launch cap (6dp, 0 = none):", p.launchCap);
         console2.log("executable after (s):    ", delay);
         console2.log("operation id:");
-        console2.logBytes32(tl.hashOperationBatch(targets, values, payloads, bytes32(0), salt));
+        console2.logBytes32(p.tl.hashOperation(p.store, 0, data, bytes32(0), p.salt));
     }
 
     /// @notice Execute the queued operation once the timelock delay has elapsed.
-    function execute() public {
-        (
-            address store,
-            TimelockController tl,
-            address[] memory targets,
-            uint256[] memory values,
-            bytes[] memory payloads,,
-            bytes32 salt,
-            uint16 expectedPoolId
-        ) = _params();
-        // The batch caps the pool id the spoke was going to get. If the registry grew in the meantime
-        // that id is another pool, and executing would cap the wrong one.
-        require(
-            targets.length == 1 || uint16(DollarStore(store).poolCount()) == expectedPoolId,
-            "poolCount moved since scheduling: re-schedule"
-        );
-        uint256 key = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        vm.startBroadcast(key);
-        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+    function execute(Params memory p) public {
+        vm.startBroadcast(p.key);
+        p.tl.execute(p.store, 0, payload(p), bytes32(0), p.salt);
         vm.stopBroadcast();
-        console2.log("executed createSpoke on:", store);
+        console2.log("executed createSpoke on:", p.store);
     }
 
     function run() external {
         string memory action = vm.envOr("ACTION", string("schedule"));
         if (keccak256(bytes(action)) == keccak256(bytes("execute"))) {
-            execute();
+            execute(fromEnv());
         } else {
-            schedule();
+            schedule(fromEnv());
         }
     }
 }

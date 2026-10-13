@@ -314,7 +314,7 @@ contract Handler is Test {
     function relistSpoke() external {
         if (store.isAssetListed(address(rlusd))) return;
         vm.prank(governor);
-        try store.createSpoke(address(rlusd), feed, 0) returns (uint16 id) {
+        try store.createSpoke(address(rlusd), feed, 0, 0) returns (uint16 id) {
             spokeId = id;
             spokeIds.push(id);
             relists += 1;

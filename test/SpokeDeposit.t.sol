@@ -53,7 +53,7 @@ contract SpokeDepositTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         usdc.mint(alice, 1_000_000e6);
@@ -133,7 +133,7 @@ contract SpokeDepositTest is Test {
     function test_deposit_revertsWrongSpokeAsset() public {
         MockERC20 pyusd = new MockERC20("PayPal USD", "PYUSD", 6);
         vm.prank(governor);
-        store.createSpoke(address(pyusd), address(feed), 0); // spoke B (poolId 2)
+        store.createSpoke(address(pyusd), address(feed), 0, 0); // spoke B (poolId 2)
 
         // Depositing spoke B's asset into spoke A must revert WrongPool.
         pyusd.mint(alice, 1_000e6);

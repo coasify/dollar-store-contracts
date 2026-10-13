@@ -99,7 +99,7 @@ contract ExitIssuerProbeTest is Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usds), address(feed));
-        spoke = store.createSpoke(address(pyusd), address(feed), 0);
+        spoke = store.createSpoke(address(pyusd), address(feed), 0, 0);
         vm.stopPrank();
 
         address[3] memory who = [alice, bob, trader];

@@ -17,6 +17,7 @@ feature-named integration suites listed below rather than by a same-named unit f
 | `DollarStore.sol` (risk controls: pauses, peg, staleness) | `RiskControls.t.sol` |
 | `DollarStore.sol` (who may pause and unpause: pausers, unpauser) | `PauseRoles.t.sol` |
 | `DollarStore.sol` (launch caps) | `LaunchCaps.t.sol` |
+| `DollarStore.createSpoke` with a launch cap, and `script/CreateSpoke.s.sol` (spokes created through the timelock, several queued at once) | `CreateSpoke.t.sol` |
 | `DLRS.sol` (soulbound token, mint/burn authority) | `DLRS.t.sol` |
 
 ## Storage
@@ -60,5 +61,5 @@ A second spoke stays active so spoke-to-spoke swaps always have a partner.
 one that takes a fee on transfer, one that re-enters the store on transfer, and a Chainlink-style
 price feed.
 
-`script/Upgrade.s.sol` and `script/CreateSpoke.s.sol` have no test of their own. The upgrade path is
-exercised through the proxy in `DollarStore.t.sol`, and `createSpoke` through the suites above.
+`script/Upgrade.s.sol` has no test of its own. The upgrade path is exercised through the proxy in
+`DollarStore.t.sol`.

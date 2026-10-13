@@ -34,11 +34,13 @@ library SpokeAdminLib {
     event PoolCreated(uint16 indexed poolId, uint8 kind);
     event AssetListed(address indexed asset, uint16 indexed poolId, uint8 decimals, address priceFeed);
     event MinDlrsReserveSet(uint16 indexed poolId, uint256 oldMin, uint256 newMin);
+    event LaunchCapSet(uint16 indexed poolId, uint256 cap);
     event ReservesSynced(address indexed asset, uint256 oldReserves, uint256 newReserves);
     event TokensRescued(address indexed asset, address indexed to, uint256 amount);
 
-    /// @notice Create a spoke pool for `spokeAsset` (see IDollarStore.createSpoke).
-    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve_)
+    /// @notice Create a spoke pool for `spokeAsset` (see IDollarStore.createSpoke). A non-zero
+    ///         `launchCap` is set on the new pool in the same call.
+    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve_, uint256 launchCap)
         external
         returns (uint16 poolId)
     {
@@ -80,6 +82,10 @@ library SpokeAdminLib {
         emit PoolCreated(poolId, uint8(RegistryStorage.PoolKind.Spoke));
         emit AssetListed(spokeAsset, poolId, dec, priceFeed);
         emit MinDlrsReserveSet(poolId, 0, minDlrsReserve_);
+        if (launchCap != 0) {
+            p.launchCap = launchCap;
+            emit LaunchCapSet(poolId, launchCap);
+        }
     }
 
     /// @notice Escrow-aware reserve write-down (see IDollarStore.syncReserves).

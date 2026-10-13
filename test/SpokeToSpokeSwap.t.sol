@@ -60,8 +60,8 @@ contract SpokeToSpokeSwapTest is Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(usdcFeed));
         store.addHubAsset(address(usdt), address(feed));
-        spokeA = store.createSpoke(address(pyusd), address(feed), 0);
-        spokeB = store.createSpoke(address(usdg), address(feed), 0);
+        spokeA = store.createSpoke(address(pyusd), address(feed), 0, 0);
+        spokeB = store.createSpoke(address(usdg), address(feed), 0, 0);
         vm.stopPrank();
 
         address[5] memory who = [alice, bob, carol, dave, address(this)];
@@ -498,7 +498,7 @@ contract SpokeToSpokeSwapTest is Test {
     function test_s2s_reentrantWantedToken_reverts() public {
         MockReentrantERC20 evil = new MockReentrantERC20("Reentrant", "RNT", 6);
         vm.prank(governor);
-        uint16 spokeC = store.createSpoke(address(evil), address(feed), 0);
+        uint16 spokeC = store.createSpoke(address(evil), address(feed), 0, 0);
         evil.mint(alice, 1_000e6);
         _deposit(spokeA, address(usdc), 1_000e6);
         _deposit(spokeC, address(evil), 1_000e6);
@@ -818,7 +818,7 @@ contract SpokeToSpokeSwapTest is Test {
         _seedDefault();
         MockERC20 gone = new MockERC20("Removed", "RMV", 6);
         vm.startPrank(governor);
-        uint16 spokeC = store.createSpoke(address(gone), address(feed), 0);
+        uint16 spokeC = store.createSpoke(address(gone), address(feed), 0, 0);
         store.removePool(spokeC);
         vm.stopPrank();
 

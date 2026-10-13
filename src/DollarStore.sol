@@ -348,7 +348,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      (poolId >= 1) and registers the asset into it. Ownership is enforced by the `listed`
     ///      flag: an already-listed asset (hub or another spoke) cannot be re-listed, so an asset
     ///      belongs to exactly one pool.
-    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve_)
+    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve_, uint256 launchCap)
         external
         override
         onlyGovernor
@@ -356,7 +356,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     {
         // Cold path: delegated to SpokeAdminLib (runs in this proxy's storage) to keep DollarStore
         // under the EIP-170 runtime size limit.
-        return SpokeAdminLib.createSpoke(spokeAsset, priceFeed, minDlrsReserve_);
+        return SpokeAdminLib.createSpoke(spokeAsset, priceFeed, minDlrsReserve_, launchCap);
     }
 
     /// @inheritdoc IDollarStore

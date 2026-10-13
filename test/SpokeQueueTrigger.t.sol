@@ -44,7 +44,7 @@ contract SpokeQueueTriggerTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         usdc.mint(alice, 1_000_000e6);
