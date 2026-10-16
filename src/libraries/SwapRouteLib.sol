@@ -146,32 +146,17 @@ library SwapRouteLib {
     function quote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256) {
         (bool valid, Route memory route) = classifyRoute(offerAsset, wantAsset);
         if (!valid || !PegLib.canInflow(offerAsset)) return 0;
-        uint256 units = amount / route.offerScaling;
-        if (units == 0) return 0;
-
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-        uint256 filled = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset, route.spokePoolId)].totalDepth;
-        if (filled >= units) return NormalizationLib.toNative(units, route.wantScaling);
-
-        // Earlier same-direction positions are settled from reserves first, up to MAX_INLINE_SETTLE of
-        // them; the swap reaches reserves only if that clears the line.
-        uint256 available = wantReserveAvailable(route, wantAsset);
-        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, route.spokePoolId)].head;
-        for (uint256 n; current != 0 && n < MAX_INLINE_SETTLE; ++n) {
-            uint256 posAmt = qs.positions[current].offerAmount;
-            if (posAmt > available) break;
-            available -= posAmt;
-            current = qs.positions[current].next;
-        }
-        if (current == 0) filled += available;
-        return NormalizationLib.toNative(filled < units ? filled : units, route.wantScaling);
+        return NormalizationLib.toNative(
+            fillableUnits(route, offerAsset, wantAsset, amount / route.offerScaling), route.wantScaling
+        );
     }
 
     /// @notice All-or-nothing spoke-to-spoke swap through the hub assets `via`, in order: for each, a
-    ///         spoke->hub leg fills what it can under the normal rules and a hub->spoke leg pays it out.
+    ///         spoke->hub leg fills under the normal rules up to what both legs can carry, and the
+    ///         hub->spoke leg pays it out.
     ///         The whole amount fills or the call reverts. Never queues (see IDollarStore.swapSpokeToSpoke).
     /// @dev A hub asset received in leg one never leaves the contract unless leg two pays it to an
-    ///      opposite-queue owner. Leg two absorbs it into hub reserves, so every `via` is inflow-gated.
+    ///      opposite-queue owner. Leg two absorbs it into hub reserves, so a `via` that fails the inflow check is skipped.
     function swapSpokeToSpoke(
         address offerAsset,
         address wantAsset,
@@ -191,7 +176,6 @@ library SwapRouteLib {
             if (sell[i].kind != RouteKind.SpokeToHub || buy[i].kind != RouteKind.HubToSpoke) {
                 revert IDollarStore.InvalidRoute(offerAsset, wantAsset);
             }
-            PegLib.checkInflow(via[i]);
         }
         PegLib.checkInflow(offerAsset);
 
@@ -202,8 +186,17 @@ library SwapRouteLib {
 
         uint256 remaining = amountUnits;
         for (uint256 i; i < via.length && remaining > 0; ++i) {
-            uint256 got = fillDirected(sell[i], offerAsset, via[i], remaining, true);
+            // Leg two absorbs the hub asset into reserves, so one that fails the inflow check is skipped.
+            if (!PegLib.canInflow(via[i])) continue;
+            // Take through this hub asset no more than both legs can carry for the caller, so a hub asset
+            // that is short on either leg is used for what it can carry and the rest moves on to the next
+            // one. A hub asset that can carry nothing is skipped without settling anyone on its lines.
+            uint256 take = fillableUnits(buy[i], via[i], wantAsset, remaining);
+            take = fillableUnits(sell[i], offerAsset, via[i], take);
+            if (take == 0) continue;
+            uint256 got = fillDirected(sell[i], offerAsset, via[i], take, true);
             if (got == 0) continue;
+            // Falls short only when a payout to a queued owner fails and that position is parked.
             uint256 paid = fillDirected(buy[i], via[i], wantAsset, got, true);
             if (paid < got) revert IDollarStore.InsufficientLiquidity(amountUnits - remaining + paid, amountUnits);
             remaining -= got;
@@ -353,6 +346,31 @@ library SwapRouteLib {
             }
         }
         valid = true;
+    }
+
+    /// @dev Units of up to `units` that fillDirected would fill now for a route, assuming every payout
+    ///      succeeds: the exact-opposite queue, then reserves if settling up to MAX_INLINE_SETTLE earlier
+    ///      same-direction positions clears that line.
+    function fillableUnits(Route memory route, address offerAsset, address wantAsset, uint256 units)
+        internal
+        view
+        returns (uint256)
+    {
+        if (units == 0) return 0;
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+        uint256 filled = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset, route.spokePoolId)].totalDepth;
+        if (filled >= units) return units;
+
+        uint256 available = wantReserveAvailable(route, wantAsset);
+        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, route.spokePoolId)].head;
+        for (uint256 n; current != 0 && n < MAX_INLINE_SETTLE; ++n) {
+            uint256 posAmt = qs.positions[current].offerAmount;
+            if (posAmt > available) break;
+            available -= posAmt;
+            current = qs.positions[current].next;
+        }
+        if (current == 0) filled += available;
+        return filled < units ? filled : units;
     }
 
     /// @dev Protocol-reserve liquidity available to fill `want` for a route.

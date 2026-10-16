@@ -377,12 +377,23 @@ interface IDollarStore {
     ) external returns (uint256 amountOut);
 
     /// @notice All-or-nothing swap between two spoke assets through the hub assets in `via`, tried in
-    ///         order. For each, a spoke->hub leg fills what it can, like swapExactInput (opposite queue,
-    ///         then reserves behind any same-direction queue), and a hub->spoke leg pays that amount out;
-    ///         if the second leg falls short, or the list runs out before the full amount fills, the
-    ///         call reverts. Never queues. `offerAsset` and every `via` are inflow-checked. To quote a
-    ///         single hub asset, chain getSwapQuote(via, wantAsset, getSwapQuote(offerAsset, via, amount)):
-    ///         the swap fills if that equals `amount` in normalized units. Simulate the call for a list.
+    ///         order. For each, a spoke->hub leg fills, like swapExactInput (opposite queue, then reserves
+    ///         behind any same-direction queue), up to what both legs can carry through that hub asset, and
+    ///         the hub->spoke leg pays it out; the rest moves on to the next hub asset. Hub assets are used
+    ///         greedily in list order, and they share the offered spoke's hub claim and the wanted spoke's
+    ///         reserve, which positions already waiting on a line the call enters are paid from first. So
+    ///         the result can depend on the order of `via`, and a list can revert when another order or a
+    ///         shorter list would fill (see docs/PROTOCOL.md). Each hub asset is sized assuming every payout
+    ///         succeeds, so a waiting position whose owner cannot be paid counts against that entry even
+    ///         though the fill parks it; a later entry, the same hub asset included, is sized again. An
+    ///         entry sized at zero is skipped without trying any payout, so it parks no one.
+    ///         Reverts if the list runs out before the full amount fills, or if a second leg pays out less
+    ///         than its first leg took (a payout failed, that position was parked, and the wanted spoke's
+    ///         reserve cannot cover the rest). Parking alone does not revert. Never queues. `offerAsset`
+    ///         is inflow-checked, and a `via` that fails the inflow check is skipped. To quote a single
+    ///         hub asset, chain getSwapQuote(via, wantAsset, getSwapQuote(offerAsset, via, amount)): if
+    ///         that equals `amount` in normalized units, the swap fills unless a payout to a queued owner
+    ///         fails. Simulate the call for a list.
     /// @return amountOut Amount of wantAsset delivered (native units of wantAsset).
     function swapSpokeToSpoke(
         address offerAsset,
