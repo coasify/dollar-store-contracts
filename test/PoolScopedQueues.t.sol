@@ -353,4 +353,53 @@ contract PoolScopedQueuesTest is Test {
         vm.prank(dave);
         store.swap(address(usdc), address(rlusd), 900e6, 0, 0, block.timestamp);
     }
+
+    // ============ Relisting keeps the deposit pause and the probe exemption ============
+
+    function _pauseAndExempt() internal {
+        vm.prank(pauser);
+        store.pauseDeposits(address(rlusd));
+        vm.prank(governor);
+        store.setProbeExempt(address(rlusd), true);
+    }
+
+    function test_relist_keepsDepositPauseAndProbeExemption() public {
+        _pauseAndExempt();
+        uint16 spoke2 = _removeAndRelist();
+
+        assertTrue(store.isDepositPaused(address(rlusd)), "pause kept");
+        assertTrue(store.isProbeExempt(address(rlusd)), "exemption kept");
+        vm.prank(lp);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(rlusd)));
+        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+
+        vm.prank(unpauser);
+        store.unpauseDeposits(address(rlusd));
+        vm.prank(lp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+    }
+
+    function test_relistAsHubAsset_keepsDepositPauseAndProbeExemption() public {
+        _pauseAndExempt();
+        vm.startPrank(governor);
+        store.removePool(spoke);
+        store.addHubAsset(address(rlusd), address(feed));
+        vm.stopPrank();
+
+        assertTrue(store.isDepositPaused(address(rlusd)), "pause kept");
+        assertTrue(store.isProbeExempt(address(rlusd)), "exemption kept");
+        vm.prank(lp);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(rlusd)));
+        store.deposit(0, address(rlusd), 1_000e18, block.timestamp);
+    }
+
+    /// @notice Positive control: an asset removed with neither flag set is relisted with neither.
+    function test_relist_withoutFlags_staysOpen() public {
+        uint16 spoke2 = _removeAndRelist();
+
+        assertFalse(store.isDepositPaused(address(rlusd)));
+        assertFalse(store.isProbeExempt(address(rlusd)));
+        vm.prank(lp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+    }
 }

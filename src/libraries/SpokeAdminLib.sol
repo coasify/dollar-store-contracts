@@ -74,8 +74,8 @@ library SpokeAdminLib {
             scalingFactor: sf,
             priceFeed: priceFeed,
             listed: true,
-            depositPaused: false,
-            probeExempt: false
+            depositPaused: r.assetConfig[spokeAsset].depositPaused,
+            probeExempt: r.assetConfig[spokeAsset].probeExempt
         });
         p.assets.push(spokeAsset);
 

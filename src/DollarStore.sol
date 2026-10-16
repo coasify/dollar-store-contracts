@@ -333,8 +333,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
             scalingFactor: sf,
             priceFeed: priceFeed,
             listed: true,
-            depositPaused: false,
-            probeExempt: false
+            depositPaused: r.assetConfig[asset].depositPaused,
+            probeExempt: r.assetConfig[asset].probeExempt
         });
         r.pools[0].assets.push(asset);
 

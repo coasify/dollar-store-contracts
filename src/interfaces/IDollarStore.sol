@@ -116,6 +116,7 @@ interface IDollarStore {
     ///         scaling factor, and requires a Chainlink price feed. Reverts if the asset decimals
     ///         are outside [6, 18], the feed reports more than 18 decimals, or it is already listed.
     ///         Reverts EscrowImpaired while the contract holds less of the asset than its queue escrow.
+    ///         A relisted asset keeps its deposit pause and probe exemption.
     function addHubAsset(address asset, address priceFeed) external;
 
     /// @notice Whether an asset is listed/supported.
@@ -177,7 +178,8 @@ interface IDollarStore {
     ///         no cap). The cap is set in the same call, so it never depends on a pool id chosen in advance.
     ///         Reverts if the asset is already listed (an asset belongs to exactly one pool), decimals are
     ///         outside [6,18], or the feed reports more than 18 decimals. Reverts EscrowImpaired while the
-    ///         contract holds less of the asset than its queue escrow.
+    ///         contract holds less of the asset than its queue escrow. A relisted asset keeps its deposit
+    ///         pause and probe exemption.
     /// @return poolId The new spoke's pool id (>= 1).
     function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve, uint256 launchCap)
         external
