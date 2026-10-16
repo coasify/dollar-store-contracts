@@ -24,10 +24,10 @@ import {SwapRouteLib} from "./libraries/SwapRouteLib.sol";
 import {PegLib} from "./libraries/PegLib.sol";
 import {DLRS} from "./DLRS.sol";
 
-/// @title DollarStore - Upgradeable (UUPS) base + governance skeleton (Milestone M1)
-/// @notice Establishes the upgradeable core: ERC-7201 namespaced storage, two-step
-///         governor/guardian roles, pause/unpause, and governor-gated UUPS upgrades.
-/// @dev Swap/queue/reserve logic is added in later milestones. This is the M1 foundation.
+/// @title DollarStore - Upgradeable (UUPS) stablecoin swap store with a hub pool and spoke pools
+/// @notice Upgrades are authorized by the upgrader. Pausing is done by the pausers and lifting a pause
+///         by the unpauser. The governor lists assets and sets parameters; the guardian lowers launch
+///         caps and haircuts impaired escrow.
 /// @dev Storage is held in CoreStorage's ERC-7201 namespaced slot, NOT in contract state
 ///      variables, so the layout is stable across upgrades.
 /// @custom:security-contact admin@dollarstore.world
@@ -53,7 +53,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      a value anything runs with, so it is set with margin: some feeds run on a 48h heartbeat, and
     ///      a ceiling below what a listed feed needs bricks swaps and takes an upgrade to lift, while a
     ///      generous one only matters if a governor action is wrong, which is timelocked and cancellable
-    ///      by the guardian.
+    ///      by the veto Safe.
     uint256 private constant MAX_STALENESS = 3 days;
 
     // Routing types (RouteKind / Route) and the directed-swap engine live in SwapRouteLib (linked,
@@ -95,7 +95,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @dev Restricts to the current upgrader (read from namespaced core storage). The upgrader
-    ///      holds UUPS upgrade authority and is kept separate from the governor (M8).
+    ///      holds UUPS upgrade authority and is kept separate from the governor.
     modifier onlyUpgrader() {
         if (msg.sender != CoreStorage.layout().upgrader) revert OnlyUpgrader();
         _;
@@ -304,12 +304,12 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         emit PauserSet(account, allowed);
     }
 
-    // ============ Asset Registry (M2) ============
+    // ============ Asset Registry ============
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated. Reads and freezes the token's decimals, computes the scaling factor
     ///      (reverts if decimals are outside [6, 18]), requires a price feed, and lists the asset
-    ///      into the hub (poolId 0). Reserves remain zero until deposits land in M3.
+    ///      into the hub (poolId 0).
     function addHubAsset(address asset, address priceFeed) external override nonReentrant onlyGovernor {
         if (asset == address(0) || priceFeed == address(0)) revert ZeroAddress();
         // Feed decimals must be <= 18: PegLib.checkPeg scales by 10**(18 - feedDecimals), which would
@@ -341,7 +341,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         emit AssetListed(asset, 0, dec, priceFeed);
     }
 
-    // ============ Spoke Lifecycle (U2) ============
+    // ============ Spoke Lifecycle ============
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated. Mirrors addHubAsset's listing guards but creates a NEW spoke pool
@@ -495,7 +495,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         }
     }
 
-    // ============ Hub Deposit / Withdraw (M3) ============
+    // ============ Hub Deposit / Withdraw ============
 
     /// @inheritdoc IDollarStore
     /// @dev Routes to the hub (poolId 0, mints DLRS 1:1) or a spoke (poolId >= 1). A spoke deposit is
@@ -519,12 +519,12 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (!cfg.listed) revert AssetNotListed(asset);
 
         if (poolId == 0) {
-            // Hub deposit: asset must be a hub asset; mints DLRS 1:1 (M3).
+            // Hub deposit: asset must be a hub asset; mints DLRS 1:1.
             if (cfg.poolId != 0) revert WrongPool(asset, poolId);
             return _depositHub(r, asset, cfg.scalingFactor, amount);
         }
 
-        // Spoke deposit (U2). The pool must be a live, active spoke (no new liquidity once winding down).
+        // Spoke deposit. The pool must be a live, active spoke (no new liquidity once winding down).
         RegistryStorage.Pool storage p = _spokePool(poolId);
         if (p.paused) revert PoolPaused(poolId);
         if (p.status != RegistryStorage.PoolStatus.Active) revert SpokeWindingDown(poolId);
@@ -650,12 +650,12 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         return SpokeLifecycleLib.withdrawSpoke(poolId, units, deadline);
     }
 
-    // ============ Directed Swaps & Queues (M4) ============
+    // ============ Directed Swaps & Queues ============
 
     /// @inheritdoc IDollarStore
     /// @dev Fill order: exact-opposite queue -> protocol reserves (only if the same-direction
     ///      queue is empty) -> queue the remainder. Hub-hub swaps are reserve-neutral (no DLRS
-    ///      mint/burn) — they move reserve value 1:1 between assets. tip must be 0 (reserved for U1).
+    ///      mint/burn) — they move reserve value 1:1 between assets. tip must be 0 (reserved for a later upgrade).
     function swap(
         address offerAsset,
         address wantAsset,
@@ -804,7 +804,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     // implementation to fit under the EIP-170 24576-byte runtime limit (accepted delegatecall cost on
     // the swap path).
 
-    // ============ Risk Controls (M5) ============
+    // ============ Risk Controls ============
 
     /// @inheritdoc IDollarStore
     function setPriceFeed(address asset, address feed) external override onlyGovernor {
@@ -932,7 +932,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         return CoreStorage.layout().maxStaleness;
     }
 
-    // ============ Launch Caps (M6) ============
+    // ============ Launch Caps ============
 
     /// @inheritdoc IDollarStore
     function setLaunchCap(uint16 poolId, uint256 cap) external override onlyGovernor {
@@ -964,7 +964,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Enforce a pool's launch cap against its active exposure. cap == 0 means no cap. Queue
     ///      escrow is excluded from exposure (it is not active pool liquidity). For the hub (poolId 0),
     ///      exposure == total DLRS supply (backed 1:1 by hub reserves). For a spoke, exposure == that
-    ///      spoke's asset reserve + its dlrsReserve (U2).
+    ///      spoke's asset reserve + its dlrsReserve.
     function _checkLaunchCap(uint16 poolId, uint256 addedUnits) internal view {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (poolId >= r.pools.length) revert InvalidPool(poolId); // defense-in-depth (callers validate)
@@ -982,7 +982,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     // ============ UUPS Upgrade Authorization ============
 
-    /// @notice Authorize a UUPS upgrade. Upgrader-gated (separate from the governor, M8).
+    /// @notice Authorize a UUPS upgrade. Upgrader-gated (separate from the governor).
     /// @dev In production the upgrader is a TimelockController (longest delay), so upgrades carry
     ///      a public delay and cannot be triggered by a governor or guardian compromise alone.
     /// @param newImplementation The address of the new implementation (validated by UUPS machinery).

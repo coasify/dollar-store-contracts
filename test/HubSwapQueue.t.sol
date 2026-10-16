@@ -11,7 +11,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M4: directed swaps, exact-opposite matching, FIFO queues, cancel, processQueue.
+/// @notice Directed swaps, exact-opposite matching, FIFO queues, cancel, processQueue.
 /// @dev Both assets use 6 decimals so normalized units == native (scaling 1), keeping asserts clean.
 contract HubSwapQueueTest is Test {
     DollarStore internal store;

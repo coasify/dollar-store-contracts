@@ -13,7 +13,7 @@ import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M3: hub deposit/withdraw, DLRS mint/burn, decimal normalization, pause exit-path.
+/// @notice Hub deposit/withdraw, DLRS mint/burn, decimal normalization, pause exit-path.
 contract HubDepositWithdrawTest is Test {
     DollarStore internal store;
     DLRS internal dlrs;
@@ -142,7 +142,7 @@ contract HubDepositWithdrawTest is Test {
         vm.stopPrank();
     }
 
-    // U2 (spoke deposit dispatch): depositing into a non-existent pool now reverts InvalidPool, not
+    // Spoke deposit dispatch: depositing into a non-existent pool now reverts InvalidPool, not
     // WrongPool. A hub asset targeted at poolId 1 is no longer inherently "wrong" — if pool 1 were a
     // live spoke it would route to spoke funding (_depositSpokeFunding). It only fails here because
     // pool 1 does not exist, so InvalidPool is the correct error. The WrongPool path (asset of another

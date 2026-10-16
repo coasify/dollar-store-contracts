@@ -10,7 +10,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P2: spoke lifecycle - createSpoke, ownership enforcement, setMinDlrsReserve, removePool.
+/// @notice Spoke lifecycle - createSpoke, ownership enforcement, setMinDlrsReserve, removePool.
 contract SpokeLifecycleTest is Test {
     DollarStore internal store;
 

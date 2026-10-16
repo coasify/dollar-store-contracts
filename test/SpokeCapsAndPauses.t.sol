@@ -10,7 +10,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P7: per-spoke launch caps (exposure = spoke reserve + dlrsReserve) and pool-pause
+/// @notice Per-spoke launch caps (exposure = spoke reserve + dlrsReserve) and pool-pause
 ///         semantics (pause blocks deposits/swaps/new-queue/processQueue for that spoke, leaves LP
 ///         withdrawals and queue cancellations live).
 contract SpokeCapsAndPausesTest is Test {

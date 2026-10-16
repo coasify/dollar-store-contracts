@@ -22,7 +22,7 @@ contract SpokeShareLibHarness {
     }
 }
 
-/// @notice U2 P1: pure share math for non-transferable spoke LP receipts. Rounding is always against
+/// @notice Pure share math for non-transferable spoke LP receipts. Rounding is always against
 ///         the caller, so no deposit/withdraw round-trip can extract more value than it put in.
 contract SpokeShareLibTest is Test {
     uint256 internal constant CAP = 1e30; // keep fuzz inputs in a realistic, meaningful range

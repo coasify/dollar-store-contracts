@@ -11,7 +11,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P5: hub<>spoke routing. hub->spoke pays the spoke asset from the spoke reserve and grows
+/// @notice Hub<>spoke routing. hub->spoke pays the spoke asset from the spoke reserve and grows
 ///         dlrsReserve; spoke->hub pays a hub asset from hub reserves and consumes dlrsReserve, gated by
 ///         minDlrsReserve. Spoke->spoke is rejected. Exact-opposite queue matches stay peer-to-peer.
 contract SpokeSwapTest is Test {

@@ -5,8 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {QueueStorage} from "../src/storage/QueueStorage.sol";
 
 /// @notice Harness exercising the QueueStorage library against the harness's own storage.
-/// @dev QueueStorage is reserved scaffolding for M4 (no live logic yet); these tests pin the
-///      directed-key convention, the constants, the ERC-7201 slot, and a storage round-trip.
+/// @dev These tests pin the QueueStorage directed-key convention, the constants, the ERC-7201 slot, and a storage round-trip.
 contract QueueStorageHarness {
     function key(address o, address w, uint16 poolId) external pure returns (bytes32) {
         return QueueStorage.queueKey(o, w, poolId);

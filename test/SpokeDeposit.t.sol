@@ -11,7 +11,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P3: spoke deposits. Spoke-asset LP enters the spoke reserve; hub-asset LP funds the
+/// @notice Spoke deposits. Spoke-asset LP enters the spoke reserve; hub-asset LP funds the
 ///         spoke's dlrsReserve. Both mint pro-rata receipt shares. No wallet DLRS for spoke LPs.
 contract SpokeDepositTest is Test {
     DollarStore internal store;
@@ -216,7 +216,7 @@ contract SpokeDepositTest is Test {
         vm.stopPrank();
     }
 
-    // ============ removePool now blocked when the spoke has state (deferred from P2) ============
+    // ============ removePool is blocked while the spoke has state ============
 
     function test_removePool_revertsWhenNotEmpty() public {
         _depositSpokeAsset(alice, 1_000e18);

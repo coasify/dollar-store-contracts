@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-/// @title IDollarStore - Milestone M1 interface for DollarStore
-/// @notice Minimal surface for the upgradeable (UUPS) base + governance skeleton.
-/// @dev Swap/queue/reserve logic lands in later milestones; M1 is roles + upgrade plumbing.
+/// @title IDollarStore - Interface for DollarStore
 /// @custom:security-contact admin@dollarstore.world
 interface IDollarStore {
     // ============ Events ============
@@ -98,7 +96,7 @@ interface IDollarStore {
     ///         including a multi-sig or its own.
     function setPauser(address account, bool allowed) external;
 
-    // ============ Asset Registry (M2) ============
+    // ============ Asset Registry ============
 
     /// @notice Emitted when a pool is created. `kind`: 0 = Hub, 1 = Spoke.
     event PoolCreated(uint16 indexed poolId, uint8 kind);
@@ -137,7 +135,7 @@ interface IDollarStore {
     /// @notice Assets that belong to a pool. Reverts InvalidPool if it does not exist.
     function getPoolAssets(uint16 poolId) external view returns (address[] memory);
 
-    // ============ Spoke Lifecycle (U2) ============
+    // ============ Spoke Lifecycle ============
 
     /// @notice Emitted when a spoke's protected minimum DLRS-side reserve is set or changed.
     event MinDlrsReserveSet(uint16 indexed poolId, uint256 oldMin, uint256 newMin);
@@ -241,7 +239,7 @@ interface IDollarStore {
     /// @return removedUnits The normalized 6dp escrow removed by the haircut.
     function haircutEscrow(address asset, uint256 maxPositions) external returns (uint256 removedUnits);
 
-    // ============ Hub Deposit / Withdraw (M3) ============
+    // ============ Hub Deposit / Withdraw ============
 
     /// @notice Emitted on a deposit. `nativeAmount` is what was actually pulled; `units` is the
     ///         normalized 6dp amount credited (and DLRS minted for the hub).
@@ -261,16 +259,17 @@ interface IDollarStore {
     error AssetNotListed(address asset);
     /// @notice The asset does not belong to the given pool.
     error WrongPool(address asset, uint16 poolId);
-    /// @notice The operation is not enabled yet (e.g., spoke deposits, deferred to a later milestone).
-    error NotEnabled();
     /// @notice The pool's reserves are insufficient for the requested amount.
     error InsufficientReserves(address asset, uint256 requested, uint256 available);
     /// @notice The asset delivered less than expected (fee-on-transfer / non-standard); unsupported.
     error FeeOnTransferNotSupported(address asset);
 
-    /// @notice Deposit `amount` (native units) of a hub asset and receive DLRS 1:1 in normalized
-    ///         units. Sub-unit dust stays with the caller. Hub-only in this milestone.
-    /// @return receiptUnits The normalized 6dp amount credited (DLRS minted).
+    /// @notice Deposit `amount` (native units) into pool `poolId`. Into the hub (poolId 0), a hub asset
+    ///         mints DLRS 1:1 in normalized units. Into a spoke, the spoke's asset or a hub asset mints
+    ///         non-transferable receipt shares and emits SpokeLiquidityAdded. Sub-unit dust stays with
+    ///         the caller.
+    /// @return receiptUnits For the hub, the DLRS minted (normalized 6dp). For a spoke, the receipt
+    ///         shares credited, which stop matching units once the spoke takes a write-down.
     function deposit(uint16 poolId, address asset, uint256 amount, uint256 deadline)
         external
         returns (uint256 receiptUnits);
@@ -295,7 +294,7 @@ interface IDollarStore {
     /// @notice All assets in a pool and their reserves (normalized 6dp). Reverts InvalidPool if absent.
     function getReserves(uint16 poolId) external view returns (address[] memory assets, uint256[] memory amounts);
 
-    // ============ Directed Swaps & Queues (M4) ============
+    // ============ Directed Swaps & Queues ============
 
     /// @notice Emitted on a swap. Amounts are normalized 6dp units.
     event Swap(
@@ -331,7 +330,7 @@ interface IDollarStore {
     error SameAsset();
     /// @notice The (offerAsset, wantAsset) route is not supported, e.g. spoke to spoke through swap().
     error InvalidRoute(address offerAsset, address wantAsset);
-    /// @notice A non-zero tip was supplied; priority tips are a post-launch upgrade (U1).
+    /// @notice A non-zero tip was supplied; priority tips would be a later upgrade.
     error TipNotEnabled();
     /// @notice The directed queue is at capacity (MAX_QUEUE_POSITIONS).
     error QueueFull(address offerAsset, address wantAsset);
@@ -352,7 +351,7 @@ interface IDollarStore {
     ///         exact-opposite queue then protocol reserves; queues any remainder.
     /// @param minAmountOut Minimum amount that must be filled instantly before queueing; set equal
     ///        to the normalized `amount` to require a full instant fill (else it reverts).
-    /// @param tip Reserved for U1 priority queues; MUST be 0 in this version.
+    /// @param tip Reserved for priority tips; must be 0.
     /// @return amountFilled Instantly filled amount (normalized 6dp).
     /// @return amountQueued Amount escrowed into the queue (normalized 6dp).
     function swap(
@@ -436,7 +435,7 @@ interface IDollarStore {
     ///         cannot receive wantAsset makes the swap revert. Simulate the call for an exact answer.
     function getSwapQuote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256);
 
-    // ============ Risk Controls (M5) ============
+    // ============ Risk Controls ============
 
     event PriceFeedUpdated(address indexed asset, address indexed feed);
     event ProbeExemptSet(address indexed asset, bool exempt);
@@ -514,7 +513,7 @@ interface IDollarStore {
     /// @notice Current max oracle staleness (seconds).
     function maxStaleness() external view returns (uint256);
 
-    // ============ Launch Caps (M6) ============
+    // ============ Launch Caps ============
 
     /// @notice Emitted when a pool's launch cap changes. cap == 0 means no cap.
     event LaunchCapSet(uint16 indexed poolId, uint256 cap);

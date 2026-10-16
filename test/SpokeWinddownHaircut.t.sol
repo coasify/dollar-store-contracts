@@ -10,7 +10,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P8: spoke winding-down lifecycle and the guardian escrow-impairment haircut.
+/// @notice Spoke winding-down lifecycle and the guardian escrow-impairment haircut.
 contract SpokeWinddownHaircutTest is Test {
     DollarStore internal store;
 

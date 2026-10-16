@@ -10,8 +10,8 @@ import {DollarStore} from "../src/DollarStore.sol";
 /// @notice Deploys a new DollarStore implementation and points the proxy at it.
 /// @dev In production, _authorizeUpgrade is upgrader-gated (separate from the governor), so the
 ///      upgrade call MUST come from the upgrader (a long-delay TimelockController). This script
-///      broadcasts with a single key for convenience in dev/staging; the full Timelock rehearsal
-///      lands in M8.
+///      broadcasts with a single key for convenience in dev/staging; in production the call is
+///      scheduled and executed through the upgrader timelock.
 /// @dev Env vars:
 ///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key (must be / act as upgrader).
 ///      - PROXY (required): address of the existing ERC1967 proxy to upgrade.

@@ -12,7 +12,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M6: temporary launch exposure caps (hub cap == total DLRS supply). Queue escrow excluded.
+/// @notice Temporary launch exposure caps (hub cap == total DLRS supply). Queue escrow excluded.
 contract LaunchCapsTest is Test {
     DollarStore internal store;
     DLRS internal dlrs;

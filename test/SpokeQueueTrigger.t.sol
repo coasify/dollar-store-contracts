@@ -11,7 +11,7 @@ import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P6: deposits into a spoke settle the queues the new liquidity can fill, and a
+/// @notice Deposits into a spoke settle the queues the new liquidity can fill, and a
 ///         position whose payout fails is parked whether its escrow is a hub or a spoke asset.
 contract SpokeQueueTriggerTest is Test {
     DollarStore internal store;

@@ -15,7 +15,7 @@ import {PegLib} from "./PegLib.sol";
 /// @notice The full directed-queue swap engine (route classification + reserve-aware fills + FIFO
 ///         same-direction settlement + cancel) extracted out of DollarStore so the
 ///         implementation fits under the EIP-170 24576-byte runtime limit while still shipping the
-///         complete U2 feature set in a single deployment. The state-changing entrypoints (swap,
+///         complete feature set in a single deployment. The state-changing entrypoints (swap,
 ///         swapExactInput, processQueue, triggerSpokeQueues, cancelPosition) are `public`, so
 ///         DollarStore reaches them via DELEGATECALL: they run in the proxy storage context (same
 ///         ERC-7201 slots) and msg.sender / block.timestamp are preserved. This is the accepted cost
@@ -84,7 +84,7 @@ library SwapRouteLib {
         if (tip != 0) revert IDollarStore.TipNotEnabled();
 
         Route memory route = validateRoute(offerAsset, wantAsset);
-        PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
+        PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset
 
         (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
         if (amountUnits == 0) revert IDollarStore.ZeroAmount();
@@ -122,7 +122,7 @@ library SwapRouteLib {
         }
 
         Route memory route = validateRoute(offerAsset, wantAsset);
-        PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
+        PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset
 
         (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
         if (amountUnits == 0) revert IDollarStore.ZeroAmount();

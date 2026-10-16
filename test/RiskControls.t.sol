@@ -12,7 +12,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M5: pauses (asset/pool), oracle peg check, syncReserves/rescueTokens.
+/// @notice Pauses (asset/pool), oracle peg check, syncReserves/rescueTokens.
 contract RiskControlsTest is Test {
     DollarStore internal store;
     DLRS internal dlrs;

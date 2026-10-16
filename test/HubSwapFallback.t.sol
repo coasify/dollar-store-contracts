@@ -14,7 +14,7 @@ import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M4 edge coverage: failed-transfer parking, linked-list surgery on
+/// @notice Edge coverage: failed-transfer parking, linked-list surgery on
 ///         middle/multi removals, partial opposite-queue consumption, multi-position matching,
 ///         userPositions swap-and-pop, reentrancy blocking, cross-decimal swaps, and views.
 /// @dev Complements HubSwapQueue.t.sol (happy paths). Assets use MockBlacklistERC20 so any owner
@@ -380,7 +380,7 @@ contract HubSwapFallbackTest is Test {
         vm.stopPrank();
     }
 
-    // U2 (spoke withdraw dispatch): withdrawing from a non-existent pool now reverts InvalidPool, not
+    // Spoke withdraw dispatch: withdrawing from a non-existent pool now reverts InvalidPool, not
     // WrongPool. A hub asset targeted at poolId 1 is no longer inherently "wrong" — if pool 1 were a
     // live spoke it would route to a hub-asset spoke exit (_withdrawSpokeHubAsset). It only fails here
     // because pool 1 does not exist. The WrongPool path (another spoke's asset) is covered in
