@@ -262,6 +262,13 @@ contract SwapQuoteTest is Test {
         _quoteIsZeroAndSwapReverts(abi.encodePacked(IDollarStore.PriceOutOfBounds.selector));
     }
 
+    function test_quote_offerFeedTimeInFuture_zero() public {
+        _deposit(0, usdt, 1_000e6);
+        assertEq(store.getSwapQuote(address(usdc), address(usdt), 100e6), 100e6, "positive before");
+        feed.setUpdatedAt(block.timestamp + 1);
+        _quoteIsZeroAndSwapReverts(abi.encodePacked(IDollarStore.PriceStale.selector));
+    }
+
     function test_quote_offerPriceStale_zero() public {
         _deposit(0, usdt, 1_000e6);
         assertEq(store.getSwapQuote(address(usdc), address(usdt), 100e6), 100e6, "positive before");

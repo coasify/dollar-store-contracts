@@ -160,6 +160,16 @@ contract RiskControlsTest is Test {
         vm.stopPrank();
     }
 
+    function test_peg_revertsFutureUpdateTime() public {
+        vm.warp(100_000);
+        feed.setUpdatedAt(100_001); // a malformed feed: updated after now
+        vm.startPrank(alice);
+        usdc.approve(address(store), 100e6);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.PriceStale.selector, address(usdc), 100_001));
+        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        vm.stopPrank();
+    }
+
     function test_peg_revertsStalePrice() public {
         vm.warp(100_000);
         feed.setUpdatedAt(100_000 - (store.maxStaleness() + 1)); // one second past the window

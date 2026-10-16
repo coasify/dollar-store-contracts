@@ -209,6 +209,12 @@ Example: a Chainlink feed is deprecated. A pauser pauses the affected asset
 immediately, the governor schedules `setPriceFeed`, and after the delay it is
 executed and the unpauser lifts the pause on the asset.
 
+Each price feed call may use at most 100,000 gas. A feed that answers with bad data or runs out of
+that gas, for example one that never answers, reads as unhealthy: deposits that settle queues, quotes
+and spoke-to-spoke routing skip the asset, and a swap or deposit of it reverts. A Chainlink feed read
+costs a small fraction of the budget. A feed that ever needs more reads as unhealthy until the
+governor repoints it or an upgrade raises the budget.
+
 ## Recommended launch parameters
 
 - **Upgrader timelock delay**: 14 days. Upgrades are the highest-impact action, so
