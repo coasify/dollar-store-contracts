@@ -310,7 +310,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Governor-gated. Reads and freezes the token's decimals, computes the scaling factor
     ///      (reverts if decimals are outside [6, 18]), requires a price feed, and lists the asset
     ///      into the hub (poolId 0). Reserves remain zero until deposits land in M3.
-    function addHubAsset(address asset, address priceFeed) external override onlyGovernor {
+    function addHubAsset(address asset, address priceFeed) external override nonReentrant onlyGovernor {
         if (asset == address(0) || priceFeed == address(0)) revert ZeroAddress();
         // Feed decimals must be <= 18: PegLib.checkPeg scales by 10**(18 - feedDecimals), which would
         // underflow (and DoS every inflow of this asset) for a feed with more than 18 decimals.
@@ -351,6 +351,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve_, uint256 launchCap)
         external
         override
+        nonReentrant
         onlyGovernor
         returns (uint16 poolId)
     {
@@ -377,7 +378,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      owners. Kills the pool by pausing it and unlisting its assets; the poolId is retired but the
     ///      pool stays as a tombstone in the array so later poolIds never shift. Body lives in
     ///      SpokeLifecycleLib to keep this implementation under the EIP-170 limit.
-    function removePool(uint16 poolId) external override onlyGovernor {
+    function removePool(uint16 poolId) external override nonReentrant onlyGovernor {
         SpokeLifecycleLib.removePool(poolId);
     }
 
@@ -385,7 +386,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Governor-gated, spoke-only. Enters the winding-down state: `_validateRoute` then blocks
     ///      risk-increasing spoke->hub trades and `deposit` blocks new spoke liquidity, while LP exits,
     ///      cancellations, and risk-reducing hub->spoke trades stay live. Body in SpokeLifecycleLib.
-    function windDownSpoke(uint16 poolId) external override onlyGovernor {
+    function windDownSpoke(uint16 poolId) external override nonReentrant onlyGovernor {
         SpokeLifecycleLib.windDownSpoke(poolId);
     }
 
@@ -878,7 +879,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Escrow-aware: reserves sync down to (actualBalance - escrow). Only decreases.
-    function syncReserves(uint16 poolId, address asset) external override onlyGovernor {
+    function syncReserves(uint16 poolId, address asset) external override nonReentrant onlyGovernor {
         // Cold path: delegated to SpokeAdminLib to keep DollarStore under the EIP-170 runtime size limit.
         SpokeAdminLib.syncReserves(poolId, asset);
     }

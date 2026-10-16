@@ -18,6 +18,7 @@ contract MockReentrantERC20 is ERC20 {
     address public target;
     bytes public callData;
     bool public attack;
+    bool public onPull; // fire on a transfer into the store instead of out of it
 
     constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
         _decimals = decimals_;
@@ -39,15 +40,23 @@ contract MockReentrantERC20 is ERC20 {
     /// @notice Arm the reentrancy: the next payout (store -> user) calls `target_` with `data`,
     ///         bubbling any revert.
     function armCall(address store_, address target_, bytes memory data) public {
+        onPull = false;
         store = store_;
         target = target_;
         callData = data;
         attack = true;
     }
 
+    /// @notice Like armCall, but fires on the next pull into the store (a deposit or a swap's offer).
+    function armCallOnPull(address store_, address target_, bytes memory data) external {
+        armCall(store_, target_, data);
+        onPull = true;
+    }
+
     function _update(address from, address to, uint256 value) internal override {
         super._update(from, to, value);
-        if (attack && store != address(0) && from == store && to != store) {
+        bool fires = onPull ? (to == store && from != store) : (from == store && to != store);
+        if (attack && store != address(0) && fires) {
             attack = false; // one shot; the reentrant call reverts on the guard
             Address.functionCall(target, callData);
         }
