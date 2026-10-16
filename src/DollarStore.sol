@@ -885,7 +885,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Sweeps only the excess above accounted: queue escrow always, plus reserves while listed.
-    function rescueTokens(address asset, address to) external override onlyGovernor {
+    function rescueTokens(address asset, address to) external override nonReentrant onlyGovernor {
         // Cold path: delegated to SpokeAdminLib to keep DollarStore under the EIP-170 runtime size limit.
         SpokeAdminLib.rescueTokens(asset, to);
     }

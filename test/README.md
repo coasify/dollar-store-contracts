@@ -18,6 +18,7 @@ feature-named integration suites listed below rather than by a same-named unit f
 | `DollarStore.sol` (who may pause and unpause: pausers, unpauser) | `PauseRoles.t.sol` |
 | `DollarStore.sol` (launch caps) | `LaunchCaps.t.sol` |
 | `DollarStore.createSpoke` with a launch cap, and `script/CreateSpoke.s.sol` (spokes created through the timelock, several queued at once) | `CreateSpoke.t.sol` |
+| `DollarStore.sol` (governor operations run through the open timelock executor from a token callback) | `GovernorReentrancy.t.sol` |
 | `DLRS.sol` (soulbound token, mint/burn authority) | `DLRS.t.sol` |
 
 ## Storage
