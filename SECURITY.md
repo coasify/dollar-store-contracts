@@ -179,6 +179,12 @@ through. USDT is not on the launch list. **Listing precondition:** do not list a
 sender-only freeze without first adding an issuer-query adapter (for example calling the token's
 `isBlackListed(address)` view) alongside the probe.
 
+**Listing precondition:** do not list a token whose transfer calls the sender, the recipient or any
+other address (a transfer hook or callback). Every function that moves tokens, plus `syncReserves`,
+`addHubAsset`, `createSpoke`, `windDownSpoke` and `removePool`, is `nonReentrant`, so none of them can
+run mid-transfer, but the contract is not designed or tested for tokens that run outside code during a
+transfer. Check the bridged copy as well when listing on another chain.
+
 Governance can exempt an asset from the probe (`setProbeExempt`). Exempting disables the issuer check
 for exits that pay none of that asset; real transfers still run the token's controls. Use it only if a
 token starts rejecting zero-value transfers (which would block such exits for everyone) or stops

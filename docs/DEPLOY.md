@@ -206,8 +206,10 @@ Before listing an asset, check it against the listing precondition in [SECURITY.
 2. The token must accept a zero-value transfer. If it rejects one, every exit that pays none of it
    reverts; exempt it with `setProbeExempt(asset, true)` (governor) and accept that its issuer is
    then not checked on those exits.
+3. The token must not call any other address during a transfer (no transfer hook or callback). Read
+   its `transfer` and `transferFrom` code, and check a bridged copy separately on each chain.
 
-The Sepolia test tokens below are mocks and meet both.
+The Sepolia test tokens below are mocks and meet all three.
 
 With the Safe (production): Safe -> New transaction -> Transaction Builder, targeting the governor
 timelock, function `schedule(...)` with the payload below. Collect the signatures. After the delay, another tx
@@ -266,7 +268,7 @@ cast send $GOV_TL "execute(address,uint256,bytes,bytes32,bytes32)" \
 cast call $PROXY "isAssetListed(address)(bool)" $USDT --rpc-url sepolia
 ```
 
-Then set the launch cap on the hub (poolId 0). The cap is in 6-decimal units: the dollar amount
+Then set the launch cap on the hub (poolId 0). It limits DLRS supply; hub assets deposited into a spoke count against that spoke's cap instead. The cap is in 6-decimal units: the dollar amount
 followed by six zeros (1,000,000 dollars = `1000000000000`); 0 means no cap. Schedule:
 
 ```bash

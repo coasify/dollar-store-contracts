@@ -32,7 +32,7 @@ There is one **hub** pool, id 0, and any number of **spoke** pools, ids 1 and up
 
 Each spoke has a governor-set **minimum DLRS-side reserve**. It is a floor for swaps out of the spoke asset only. LP exits are senior to it and may take the claim below it.
 
-Every listed asset has a price feed. Inflows, meaning deposits and the offered side of a swap, are rejected if the feed is stale or the price is outside the peg tolerance. Outflows are never price-checked. Each pool may carry a launch cap on total value, checked on deposits only. The governor sets, raises, lowers or removes it; the guardian can only lower it.
+Every listed asset has a price feed. Inflows, meaning deposits and the offered side of a swap, are rejected if the feed is stale or the price is outside the peg tolerance. Outflows are never price-checked. Each pool may carry a launch cap, checked on deposits only. The hub's cap limits DLRS supply; a spoke's cap limits its own reserve plus its claim on hub dollars. A hub asset deposited into a spoke counts against that spoke's cap, not the hub's, so hub reserves can exceed the hub's cap by what spokes hold. The governor sets, raises, lowers or removes it; the guardian can only lower it.
 
 ## Deposits
 
@@ -143,6 +143,8 @@ If tokens leave the contract other than through the protocol, for instance an is
 - `haircutEscrow(asset, maxPositions)`, guardian, only while the asset's pool is paused. Reduces every position offering `asset`, across every pool that ever listed it and the parked line, by the same ratio so that escrow fits the balance minus reserves. Positions reduced to zero are removed. Reverts if more than `maxPositions` positions would be visited.
 
 Which tool runs first decides whether reserves or queued positions absorb the loss. That is a governance decision and is not constrained by the contract.
+
+A spoke loss written down by `syncReserves` is shared by the spoke's LPs pro rata through their shares. A hub exit redeems DLRS at par from the hub reserves, so after a hub write-down, exits are paid in full in the order they arrive until a reserve runs short, and the holders who exit last bear the loss.
 
 ## Issuer freezes
 
