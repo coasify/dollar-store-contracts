@@ -156,7 +156,9 @@ interface IDollarStore {
     );
     /// @notice Emitted when an LP burns spoke receipt shares and receives their proportional slice of
     ///         both sides: `spokeUnits` from the spoke asset reserve and `hubUnits` from the spoke's claim
-    ///         on hub dollars (paid across hub assets, one `Withdraw` event per hub asset). 6dp units.
+    ///         on hub dollars, paid across hub assets. Each asset paid, the spoke asset included, also has
+    ///         its own Withdraw. `spokeUnits` and `hubUnits` are normalized 6dp; `sharesBurned` is a share
+    ///         count.
     event SpokeWithdrawn(
         uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 hubUnits
     );
@@ -167,8 +169,13 @@ interface IDollarStore {
     error PoolNotEmpty(uint16 poolId);
     /// @notice The pool registry is full (poolId space exhausted).
     error MaxPoolsReached();
-    /// @notice The caller does not hold enough receipt shares for the requested spoke withdrawal.
+    /// @notice The caller does not hold enough receipt shares for the requested spoke withdrawal, or a
+    ///         preview asks for more than all outstanding DLRS (hub) or shares (spoke).
     error InsufficientReceiptShares(uint256 requested, uint256 available);
+    /// @notice `minAmountsOut` is neither empty nor one entry per asset the exit can pay.
+    error MinAmountsLength(uint256 provided, uint256 expected);
+    /// @notice The exit would pay less than `minimum` of `asset`; both amounts native `asset`.
+    error WithdrawMinNotMet(address asset, uint256 amount, uint256 minimum);
     /// @notice `asset` will not deliver to `wallet`, so the exit is refused.
     error ExitBlockedByIssuer(address asset, address wallet);
 
@@ -253,8 +260,8 @@ interface IDollarStore {
         uint256 amountIn,
         uint256 receiptAmount
     );
-    /// @notice Emitted once per hub asset paid on a withdrawal (hub exits pay every hub asset held).
-    ///         `units` is normalized 6dp; `nativeAmount` is the transfer in the asset's own decimals.
+    /// @notice Emitted once per asset a withdrawal pays, the spoke asset included, tagged with the pool
+    ///         exited. `units` is normalized 6dp; `nativeAmount` is the transfer in the asset's own decimals.
     event Withdraw(
         address indexed user, uint16 indexed poolId, address indexed asset, uint256 units, uint256 nativeAmount
     );
@@ -292,22 +299,39 @@ interface IDollarStore {
         external
         returns (uint256 amountIn, uint256 receiptAmount);
 
-    /// @notice Proportional exit. Hub (poolId 0): burn `units` DLRS and receive your slice of every hub
-    ///         asset. Spoke (poolId >= 1): burn `units` receipt shares and receive your slice of the spoke
-    ///         asset and of the spoke's claim on hub dollars. The caller never chooses an asset: to end up
-    ///         100% in one asset, withdraw and then `swapOrQueue`, which respects the queue.
+    /// @notice Proportional exit: exact receipt amount in, proportional basket out; not ERC-4626. Hub
+    ///         (poolId 0): burn `receiptAmount` DLRS and receive your slice of every hub asset. Spoke
+    ///         (poolId >= 1): burn `receiptAmount` receipt shares and receive your slice of the spoke asset
+    ///         and of the spoke's claim on hub dollars. The caller never chooses an asset: to end up 100%
+    ///         in one asset, withdraw and then swap.
     ///         Exits are not pausable and are senior to minDlrsReserve: a spoke exit may take the claim
     ///         below the floor, and a fresh deposit followed by an exit returns the pool's mix, so it can
     ///         still move part of a deposit into hub assets without queueing. Pool assets of which the
     ///         exit pays none are probed with a zero-value transfer unless exempted by governance;
     ///         reverts ExitBlockedByIssuer if the probe fails.
-    /// @return spokeUnits Value paid from the spoke asset reserve, in normalized 6-decimal accounting
-    ///         units (0 for a hub exit). Tokens are sent in their own decimals.
-    /// @return hubUnits Value paid in hub assets, in the same units (equals the DLRS burned for a hub
-    ///         exit). Per-asset native amounts are on the Withdraw events.
-    function withdraw(uint16 poolId, uint256 units, uint256 deadline)
+    /// @param receiptAmount DLRS (hub) or receipt shares (spoke) to burn, from the caller.
+    /// @param minAmountsOut Empty to accept the proportional payout, or one native minimum per entry of
+    ///        `assets`, in the same order; reverts MinAmountsLength for any other length and
+    ///        WithdrawMinNotMet when an asset pays less. Build it from previewWithdraw, not getPoolAssets.
+    /// @return assets Every asset the exit can pay: the spoke asset first (spoke exits only), then every
+    ///         hub asset in listing order. A new hub listing adds a slot, so an old minimums list
+    ///         reverts on length instead of being misread.
+    /// @return amounts Native amount paid of each, 0 where nothing was paid.
+    function withdraw(uint16 poolId, uint256 receiptAmount, uint256[] calldata minAmountsOut, uint256 deadline)
         external
-        returns (uint256 spokeUnits, uint256 hubUnits);
+        returns (address[] memory assets, uint256[] memory amounts);
+
+    /// @notice What withdraw would pay for `receiptAmount` at the current state, from the same
+    ///         calculation, including how rounding remainders are handed out. Anyone can preview any
+    ///         amount: it does not check the caller's balance. It reverts where the exit's calculation
+    ///         does (ZeroAmount for a zero or sub-unit value, InsufficientReserves when the hub cannot
+    ///         cover the payout) and on more than all outstanding receipts (InsufficientReceiptShares).
+    ///         It promises the calculation only: state can change before the exit, and it does not run
+    ///         the issuer probe or any transfer, so the exit can still revert ExitBlockedByIssuer.
+    function previewWithdraw(uint16 poolId, uint256 receiptAmount)
+        external
+        view
+        returns (address[] memory assets, uint256[] memory amounts);
 
     /// @notice All assets in a pool and their reserves (normalized 6dp). Reverts InvalidPool if absent.
     function getReserves(uint16 poolId) external view returns (address[] memory assets, uint256[] memory amounts);

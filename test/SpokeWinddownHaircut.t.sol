@@ -8,6 +8,7 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Exits} from "./utils/Exits.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Spoke winding-down lifecycle and the guardian escrow-impairment haircut.
@@ -125,7 +126,7 @@ contract SpokeWinddownHaircutTest is Test {
         store.windDownSpoke(spoke);
 
         vm.prank(alice);
-        (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits,) = Exits.withdraw(store, spoke, 1_000e6);
         assertEq(spokeUnits, 1_000e6, "LP can still exit while winding down");
     }
 
@@ -300,7 +301,7 @@ contract SpokeWinddownHaircutTest is Test {
         vm.expectEmit(true, true, false, true, address(store));
         emit SpokeWithdrawn(spoke, alice, 1_000e6, 500e6, 500e6);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 1_000e6);
 
         assertEq(spokeUnits, 500e6, "half the spoke side");
         assertEq(dlrsUnits, 500e6, "half the dlrs side");
@@ -327,7 +328,7 @@ contract SpokeWinddownHaircutTest is Test {
         assertEq(store.getDlrsReserve(spoke), 1_300e6, "dlrs reserve after swap");
 
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 2_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 2_000e6);
         assertEq(spokeUnits, 700e6, "drains the whole spoke side");
         assertEq(dlrsUnits, 1_300e6, "drains the whole dlrs side");
 
@@ -350,7 +351,7 @@ contract SpokeWinddownHaircutTest is Test {
         store.pausePool(spoke);
 
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 2_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 2_000e6);
         assertEq(spokeUnits, 1_000e6, "spoke side");
         assertEq(dlrsUnits, 1_000e6, "dlrs side redeemable while paused");
     }
@@ -361,14 +362,14 @@ contract SpokeWinddownHaircutTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, uint256(2_000e6), uint256(1_000e6))
         );
-        store.withdraw(spoke, 2_000e6, block.timestamp);
+        store.withdraw(spoke, 2_000e6, new uint256[](0), block.timestamp);
     }
 
     function test_withdrawSpoke_revertsZeroShares() public {
         _depositSpokeAsset(alice, 1_000e18);
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(spoke, 0, block.timestamp);
+        store.withdraw(spoke, 0, new uint256[](0), block.timestamp);
     }
 
     function test_withdrawSpoke_revertsExpiredDeadline() public {
@@ -376,7 +377,7 @@ contract SpokeWinddownHaircutTest is Test {
         vm.warp(1000);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, uint256(999), uint256(1000)));
-        store.withdraw(spoke, 1_000e6, 999);
+        store.withdraw(spoke, 1_000e6, new uint256[](0), 999);
     }
 
     /// @notice The DLRS side is always hub-backed, so the greedy payout normally covers dlrsUnits in
@@ -398,7 +399,7 @@ contract SpokeWinddownHaircutTest is Test {
                 IDollarStore.InsufficientReserves.selector, address(rlusd), uint256(1_000e6), uint256(400e6)
             )
         );
-        store.withdraw(spoke, 2_000e6, block.timestamp);
+        store.withdraw(spoke, 2_000e6, new uint256[](0), block.timestamp);
     }
 
     /// @notice The dlrs payout walks the hub-asset set greedily; here it spans usdc then usdt.
@@ -417,7 +418,7 @@ contract SpokeWinddownHaircutTest is Test {
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 usdtBefore = usdt.balanceOf(alice);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 1_000e6);
 
         assertEq(spokeUnits, 0, "funding-only spoke: no spoke-asset side");
         assertEq(dlrsUnits, 1_000e6, "full dlrs side");

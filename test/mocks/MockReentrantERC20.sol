@@ -5,7 +5,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 interface IReentryTarget {
-    function withdraw(uint16 poolId, uint256 units, uint256 deadline) external returns (uint256, uint256);
+    function withdraw(uint16 poolId, uint256 receiptAmount, uint256[] calldata minAmountsOut, uint256 deadline)
+        external
+        returns (address[] memory, uint256[] memory);
 }
 
 /// @notice Malicious ERC20 that reenters the DollarStore on an outbound payout transfer.
@@ -34,7 +36,7 @@ contract MockReentrantERC20 is ERC20 {
 
     /// @notice Arm the reentrancy: the next payout (store -> user) reenters store.withdraw.
     function arm(address store_) external {
-        armCall(store_, store_, abi.encodeCall(IReentryTarget.withdraw, (0, 1, block.timestamp)));
+        armCall(store_, store_, abi.encodeCall(IReentryTarget.withdraw, (0, 1, new uint256[](0), block.timestamp)));
     }
 
     /// @notice Arm the reentrancy: the next payout (store -> user) calls `target_` with `data`,

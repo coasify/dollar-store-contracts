@@ -4,8 +4,10 @@ pragma solidity 0.8.24;
 import {SpokeQueueTriggerTest} from "./SpokeQueueTrigger.t.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {SpokeShareLib} from "../src/libraries/SpokeShareLib.sol";
+import {Exits} from "./utils/Exits.sol";
 
 /// @notice Recovery must isolate historical shares from all capital in a replacement pool.
+
 contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
     uint256 internal constant CAPITAL = 1_000e6;
     uint256 internal constant NATIVE_CAPITAL = 1_000e18;
@@ -47,9 +49,9 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         vm.stopPrank();
         vm.startPrank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(spoke, CAPITAL, block.timestamp);
+        store.withdraw(spoke, CAPITAL, new uint256[](0), block.timestamp);
         vm.expectPartialRevert(IDollarStore.InsufficientReceiptShares.selector);
-        store.withdraw(fresh, 1, block.timestamp);
+        store.withdraw(fresh, 1, new uint256[](0), block.timestamp);
         vm.expectPartialRevert(IDollarStore.PoolPaused.selector);
         store.deposit(spoke, address(rlusd), units * SCALE, alice, block.timestamp);
         vm.expectPartialRevert(IDollarStore.PoolPaused.selector);
@@ -70,7 +72,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         assertEq(store.getReserve(spoke, address(rlusd)), 0);
         assertEq(store.getReceiptShares(fresh, alice), 0);
         vm.prank(bob);
-        (uint256 payout, uint256 hubPayout) = store.withdraw(fresh, units, block.timestamp);
+        (uint256 payout, uint256 hubPayout) = Exits.withdraw(store, fresh, units);
         assertEq(payout, units);
         assertEq(hubPayout, 0);
     }

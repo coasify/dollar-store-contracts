@@ -166,7 +166,7 @@ contract ParkedEscrowTest is Test {
         // Alice has no path to any hub asset: she holds no shares and no DLRS.
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, 1, 0));
-        store.withdraw(spoke, 1, block.timestamp);
+        store.withdraw(spoke, 1, new uint256[](0), block.timestamp);
 
         // Cancel while blocked on USDC: the PYUSD transfer succeeds, so she gets her escrow back as PYUSD.
         uint256 pyBefore = pyusd.balanceOf(alice);
@@ -192,7 +192,7 @@ contract ParkedEscrowTest is Test {
         assertEq(dlrs.balanceOf(alice), 0);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, 1, 0));
-        store.withdraw(spoke, 1, block.timestamp);
+        store.withdraw(spoke, 1, new uint256[](0), block.timestamp);
 
         // Cancel fails while PYUSD is blocked to her: position stays parked, escrow intact.
         vm.prank(alice);
@@ -202,9 +202,9 @@ contract ParkedEscrowTest is Test {
 
         // Everyone else can leave and the spoke can be killed regardless of Alice's parked escrow.
         vm.prank(carol);
-        store.withdraw(spoke, 400e6, block.timestamp);
+        store.withdraw(spoke, 400e6, new uint256[](0), block.timestamp);
         vm.prank(dana);
-        store.withdraw(spoke, 100e6, block.timestamp);
+        store.withdraw(spoke, 100e6, new uint256[](0), block.timestamp);
         assertEq(store.getReserve(spoke, address(pyusd)), 0);
         assertEq(store.getDlrsReserve(spoke), 0);
         vm.startPrank(governor);
@@ -363,7 +363,7 @@ contract ParkedEscrowTest is Test {
 
         // Dana leaves and the spoke is removed with 600 PYUSD still parked.
         vm.prank(dana);
-        store.withdraw(spoke, 600e6, block.timestamp);
+        store.withdraw(spoke, 600e6, new uint256[](0), block.timestamp);
         vm.startPrank(governor);
         store.windDownSpoke(spoke);
         store.removePool(spoke);

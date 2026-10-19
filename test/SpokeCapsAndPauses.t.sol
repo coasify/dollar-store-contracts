@@ -8,6 +8,7 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Exits} from "./utils/Exits.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Per-spoke launch caps (exposure = spoke reserve + dlrsReserve) and pool-pause
@@ -173,7 +174,7 @@ contract SpokeCapsAndPausesTest is Test {
         store.pausePool(spoke);
 
         vm.prank(alice);
-        (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits,) = Exits.withdraw(store, spoke, 1_000e6);
         assertEq(spokeUnits, 1_000e6, "LP can exit a paused spoke");
     }
 

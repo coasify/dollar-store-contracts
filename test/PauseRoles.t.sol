@@ -365,7 +365,7 @@ contract PauseRolesTest is Test {
     function _withdraws(uint256 units) internal {
         uint256 before = usdc.balanceOf(alice);
         vm.prank(alice);
-        store.withdraw(0, units, block.timestamp);
+        store.withdraw(0, units, new uint256[](0), block.timestamp);
         assertEq(usdc.balanceOf(alice) - before, units, "exit paid in full while paused");
     }
 

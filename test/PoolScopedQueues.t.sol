@@ -146,7 +146,7 @@ contract PoolScopedQueuesTest is Test {
         store.windDownSpoke(spoke);
         uint256 lpShares = store.getReceiptShares(spoke, lp);
         vm.prank(lp);
-        store.withdraw(spoke, lpShares, block.timestamp);
+        store.withdraw(spoke, lpShares, new uint256[](0), block.timestamp);
         assertEq(store.getReserve(spoke, address(rlusd)), 0, "LP took the whole reserve");
         assertEq(store.getReceiptTotalShares(spoke), 0, "no shares left");
         uint256 buyId = _queueBuyer(dave, 500e6);
@@ -301,7 +301,7 @@ contract PoolScopedQueuesTest is Test {
         assertEq(rlusd.balanceOf(alice) - a, aliceGets, "old position paid what it is owed");
         uint256 l = rlusd.balanceOf(lp);
         vm.prank(lp);
-        store.withdraw(spoke2, shares, block.timestamp);
+        store.withdraw(spoke2, shares, new uint256[](0), block.timestamp);
         assertEq(rlusd.balanceOf(lp) - l, 1_000e18, "new LP takes the whole deposit back");
     }
 

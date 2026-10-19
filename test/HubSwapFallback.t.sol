@@ -261,7 +261,7 @@ contract HubSwapFallbackTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        store.withdraw(0, 100e6, block.timestamp);
+        store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
     }
 
     // ============ Cross-decimal swaps ============
@@ -392,7 +392,7 @@ contract HubSwapFallbackTest is Test {
     function test_withdraw_revertsInvalidPool_nonexistentPool() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(1)));
-        store.withdraw(1, 1e6, block.timestamp);
+        store.withdraw(1, 1e6, new uint256[](0), block.timestamp);
     }
 
     function test_swap_revertsWantNotListed() public {

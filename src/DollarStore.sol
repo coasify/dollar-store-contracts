@@ -642,19 +642,26 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @inheritdoc IDollarStore
     /// @dev Exit path: NOT blocked by pause (only by the reentrancy guard). An exit can still fail if a
     ///      pool asset will not transfer to the caller, or after a governance write-down.
-    ///      Proportional: the caller receives their share of every asset the pool holds. Hub (poolId 0):
-    ///      `units` is DLRS to burn, paid across hub assets by reserve weight. Spoke (poolId >= 1):
-    ///      `units` is receipt shares to burn, paid across the spoke asset and the spoke's claim on hub
-    ///      dollars. Not gated by minDlrsReserve. Body in SpokeLifecycleLib (delegatecall, same storage,
-    ///      preserves msg.sender); the nonReentrant guard here holds for the whole delegated call.
-    function withdraw(uint16 poolId, uint256 units, uint256 deadline)
+    ///      Proportional: the caller receives their share of every asset the pool holds. Not gated by
+    ///      minDlrsReserve. Body in SpokeLifecycleLib (delegatecall, same storage, preserves
+    ///      msg.sender); the nonReentrant guard here holds for the whole delegated call.
+    function withdraw(uint16 poolId, uint256 receiptAmount, uint256[] calldata minAmountsOut, uint256 deadline)
         external
         override
         nonReentrant
-        returns (uint256 spokeUnits, uint256 hubUnits)
+        returns (address[] memory assets, uint256[] memory amounts)
     {
-        if (poolId == 0) return (0, SpokeLifecycleLib.withdrawHub(units, deadline));
-        return SpokeLifecycleLib.withdrawSpoke(poolId, units, deadline);
+        return SpokeLifecycleLib.withdraw(poolId, receiptAmount, minAmountsOut, deadline);
+    }
+
+    /// @inheritdoc IDollarStore
+    function previewWithdraw(uint16 poolId, uint256 receiptAmount)
+        external
+        view
+        override
+        returns (address[] memory assets, uint256[] memory amounts)
+    {
+        return SpokeLifecycleLib.previewWithdraw(poolId, receiptAmount);
     }
 
     // ============ Directed Swaps & Queues ============

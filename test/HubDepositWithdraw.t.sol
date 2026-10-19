@@ -11,6 +11,7 @@ import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Exits} from "./utils/Exits.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Hub deposit/withdraw, DLRS mint/burn, decimal normalization, pause exit-path.
@@ -201,7 +202,7 @@ contract HubDepositWithdrawTest is Test {
         vm.expectEmit(true, true, true, true, address(store));
         emit Withdraw(alice, 0, address(usdc), 400e6, 400e6);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(0, 400e6, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = Exits.withdraw(store, 0, 400e6);
 
         assertEq(spokeUnits, 0, "hub exit has no spoke leg");
         assertEq(hubUnits, 400e6, "units paid");
@@ -214,7 +215,7 @@ contract HubDepositWithdrawTest is Test {
         _deposit(alice, dai, 2e18); // 2 DAI -> 2e6 units; DAI is the only hub reserve
         uint256 before = dai.balanceOf(alice);
         vm.prank(alice);
-        (, uint256 hubUnits) = store.withdraw(0, 15e5, block.timestamp); // 1.5 units
+        (, uint256 hubUnits) = Exits.withdraw(store, 0, 15e5); // 1.5 units
         assertEq(hubUnits, 15e5);
         assertEq(dai.balanceOf(alice) - before, 15e17, "1.5 DAI native");
         assertEq(store.getReserve(0, address(dai)), 5e5, "0.5 unit left");
@@ -229,7 +230,7 @@ contract HubDepositWithdrawTest is Test {
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 daiBefore = dai.balanceOf(alice);
         vm.prank(alice);
-        (, uint256 hubUnits) = store.withdraw(0, 500e6, block.timestamp);
+        (, uint256 hubUnits) = Exits.withdraw(store, 0, 500e6);
 
         assertEq(hubUnits, 500e6);
         assertEq(usdc.balanceOf(alice) - usdcBefore, 250e6, "half in USDC");
@@ -247,7 +248,7 @@ contract HubDepositWithdrawTest is Test {
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 daiBefore = dai.balanceOf(alice);
         vm.prank(alice);
-        store.withdraw(0, 100e6, block.timestamp);
+        store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
         assertEq(usdc.balanceOf(alice) - usdcBefore, 90e6, "90% USDC by weight");
         assertEq(dai.balanceOf(alice) - daiBefore, 10e18, "10% DAI by weight");
     }
@@ -259,7 +260,7 @@ contract HubDepositWithdrawTest is Test {
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 daiBefore = dai.balanceOf(alice);
         vm.prank(alice);
-        store.withdraw(0, 3, block.timestamp); // 3 units across two assets: 1 + 1 floors, remainder 1
+        store.withdraw(0, 3, new uint256[](0), block.timestamp); // 3 units across two assets: 1 + 1 floors, remainder 1
         uint256 gotUsdc = usdc.balanceOf(alice) - usdcBefore; // 6dp units
         uint256 gotDai = (dai.balanceOf(alice) - daiBefore) / 1e12; // back to 6dp units
         assertEq(gotUsdc + gotDai, 3, "all 3 units paid");
@@ -279,20 +280,20 @@ contract HubDepositWithdrawTest is Test {
                 IDollarStore.InsufficientReserves.selector, address(usdc), uint256(1_000e6), uint256(400e6)
             )
         );
-        store.withdraw(0, 1_000e6, block.timestamp);
+        store.withdraw(0, 1_000e6, new uint256[](0), block.timestamp);
     }
 
     function test_withdraw_revertsInsufficientDlrs() public {
         _deposit(bob, usdc, 1_000e6); // reserve exists; alice has no DLRS
         vm.prank(alice);
         vm.expectRevert(); // ERC20InsufficientBalance from DLRS.burn
-        store.withdraw(0, 100e6, block.timestamp);
+        store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
     }
 
     function test_withdraw_revertsZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(0, 0, block.timestamp);
+        store.withdraw(0, 0, new uint256[](0), block.timestamp);
     }
 
     /// @notice Withdraw is an exit path: it must keep working while paused.
@@ -302,7 +303,7 @@ contract HubDepositWithdrawTest is Test {
         store.pause();
 
         vm.prank(alice);
-        (, uint256 hubUnits) = store.withdraw(0, 1_000e6, block.timestamp);
+        (, uint256 hubUnits) = Exits.withdraw(store, 0, 1_000e6);
         assertEq(hubUnits, 1_000e6, "exit works while paused");
         assertEq(dlrs.balanceOf(alice), 0, "fully exited");
     }
@@ -314,7 +315,7 @@ contract HubDepositWithdrawTest is Test {
         _deposit(alice, usdc, 1_000e6);
         _deposit(bob, dai, 1_000e18);
         vm.prank(alice);
-        store.withdraw(0, 300e6, block.timestamp);
+        store.withdraw(0, 300e6, new uint256[](0), block.timestamp);
 
         uint256 reserveSum = store.getReserve(0, address(usdc)) + store.getReserve(0, address(dai));
         assertEq(dlrs.totalSupply(), reserveSum, "DLRS supply == sum of reserves");

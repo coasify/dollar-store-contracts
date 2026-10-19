@@ -9,6 +9,7 @@ import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Exits} from "./utils/Exits.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Spoke exits: an LP burns receipt shares and receives their proportional slice of the spoke
@@ -87,7 +88,7 @@ contract SpokeWithdrawTest is Test {
         vm.expectEmit(true, true, false, true, address(store));
         emit SpokeWithdrawn(spoke, alice, 1_000e6, 1_000e6, 0);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = Exits.withdraw(store, spoke, 1_000e6);
 
         assertEq(spokeUnits, 1_000e6);
         assertEq(hubUnits, 0);
@@ -100,7 +101,7 @@ contract SpokeWithdrawTest is Test {
     function test_withdraw_partial() public {
         _depositSpokeAsset(alice, 1_000e18);
         vm.prank(alice);
-        (uint256 spokeUnits,) = store.withdraw(spoke, 400e6, block.timestamp);
+        (uint256 spokeUnits,) = Exits.withdraw(store, spoke, 400e6);
         assertEq(spokeUnits, 400e6);
         assertEq(rlusd.balanceOf(alice), 1_000_000e18 - 600e18);
         assertEq(store.getReceiptShares(spoke, alice), 600e6);
@@ -114,7 +115,7 @@ contract SpokeWithdrawTest is Test {
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 usdtBefore = usdt.balanceOf(alice);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(spoke, 500e6, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = Exits.withdraw(store, spoke, 500e6);
 
         assertEq(spokeUnits, 0, "no spoke asset in the pool");
         assertEq(hubUnits, 500e6);
@@ -138,7 +139,7 @@ contract SpokeWithdrawTest is Test {
         uint256 rlBefore = rlusd.balanceOf(alice);
         uint256 usdcBefore = usdc.balanceOf(alice);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = Exits.withdraw(store, spoke, 1_000e6);
 
         // Alice put in only RLUSD but the pool is 50/50, so she leaves 50/50.
         assertEq(spokeUnits, 500e6);
@@ -168,7 +169,7 @@ contract SpokeWithdrawTest is Test {
         uint256 usdcBefore = usdc.balanceOf(alice);
         vm.startPrank(alice);
         (, uint256 shares) = store.deposit(spoke, address(rlusd), 900_000e18, alice, block.timestamp);
-        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(spoke, shares, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = Exits.withdraw(store, spoke, shares);
         vm.stopPrank();
 
         // She gets her share of the MIX: 900k of 1.9M total value is 47.4% of each side, so 473,684 of
@@ -200,11 +201,11 @@ contract SpokeWithdrawTest is Test {
         assertEq(store.getDlrsReserve(spoke), 1);
 
         vm.prank(alice);
-        (uint256 s1, uint256 h1) = store.withdraw(spoke, 1, block.timestamp);
+        (uint256 s1, uint256 h1) = Exits.withdraw(store, spoke, 1);
         assertEq(s1 + h1, 1, "first share pays exactly one unit");
 
         vm.prank(bob);
-        (uint256 s2, uint256 h2) = store.withdraw(spoke, 1, block.timestamp);
+        (uint256 s2, uint256 h2) = Exits.withdraw(store, spoke, 1);
         assertEq(s2 + h2, 1, "second share pays the other unit");
 
         assertEq(store.getReserve(spoke, address(rlusd)), 0);
@@ -219,7 +220,7 @@ contract SpokeWithdrawTest is Test {
         vm.prank(bob);
         store.deposit(spoke, address(usdc), 1, bob, block.timestamp); // claim 1, 4 shares, pool value 4
         vm.prank(alice);
-        (uint256 s1, uint256 h1) = store.withdraw(spoke, 3, block.timestamp); // value 3
+        (uint256 s1, uint256 h1) = Exits.withdraw(store, spoke, 3); // value 3
         assertEq(s1 + h1, 3);
         assertLe(h1, 1, "hub leg capped by the claim");
         assertEq(store.getReserve(spoke, address(rlusd)) + store.getDlrsReserve(spoke), 1, "one unit left for bob");
@@ -232,7 +233,7 @@ contract SpokeWithdrawTest is Test {
         vm.prank(pauser);
         store.pause();
         vm.prank(alice);
-        (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits,) = Exits.withdraw(store, spoke, 1_000e6);
         assertEq(spokeUnits, 1_000e6, "exit works while globally paused");
     }
 
@@ -241,7 +242,7 @@ contract SpokeWithdrawTest is Test {
         store.setMinDlrsReserve(spoke, 5_000e6);
         _fund(alice, usdc, 1_000e6);
         vm.prank(alice);
-        (, uint256 hubUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (, uint256 hubUnits) = Exits.withdraw(store, spoke, 1_000e6);
         assertEq(hubUnits, 1_000e6, "min floor does not block a proportional LP exit");
         assertEq(store.getDlrsReserve(spoke), 0);
     }
@@ -254,14 +255,14 @@ contract SpokeWithdrawTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, uint256(2_000e6), uint256(1_000e6))
         );
-        store.withdraw(spoke, 2_000e6, block.timestamp);
+        store.withdraw(spoke, 2_000e6, new uint256[](0), block.timestamp);
     }
 
     function test_withdraw_revertsZeroShares() public {
         _depositSpokeAsset(alice, 1_000e18);
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(spoke, 0, block.timestamp);
+        store.withdraw(spoke, 0, new uint256[](0), block.timestamp);
     }
 
     function test_withdraw_revertsExpiredDeadline() public {
@@ -269,7 +270,7 @@ contract SpokeWithdrawTest is Test {
         vm.warp(1000);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, uint256(999), uint256(1000)));
-        store.withdraw(spoke, 1_000e6, 999);
+        store.withdraw(spoke, 1_000e6, new uint256[](0), 999);
     }
 
     /// @dev Impairs the spoke so poolValue << totalShares; burning 1 share then rounds to 0 on both legs.
@@ -280,12 +281,12 @@ contract SpokeWithdrawTest is Test {
         store.syncReserves(spoke, address(rlusd)); // reserve 1000e6 -> 1e6
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(spoke, 1, block.timestamp);
+        store.withdraw(spoke, 1, new uint256[](0), block.timestamp);
     }
 
     function test_withdraw_revertsInvalidPool() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(7)));
-        store.withdraw(7, 1, block.timestamp);
+        store.withdraw(7, 1, new uint256[](0), block.timestamp);
     }
 }

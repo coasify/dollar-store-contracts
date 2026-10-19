@@ -80,7 +80,7 @@ contract RiskControlsTest is Test {
 
         // Exit path still works.
         vm.prank(alice);
-        store.withdraw(0, 500e6, block.timestamp);
+        store.withdraw(0, 500e6, new uint256[](0), block.timestamp);
         assertEq(store.getReserve(0, address(usdc)), 500e6, "withdraw works while paused");
     }
 

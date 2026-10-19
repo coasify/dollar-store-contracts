@@ -113,7 +113,7 @@ contract Handler is Test {
         address actor = _actor(actorSeed);
         units = bound(units, 0, dlrs.balanceOf(actor));
         vm.startPrank(actor);
-        try store.withdraw(0, units, type(uint256).max) {} catch {}
+        try store.withdraw(0, units, new uint256[](0), type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -159,7 +159,7 @@ contract Handler is Test {
         address actor = _actor(actorSeed);
         shares = bound(shares, 0, store.getReceiptShares(spokeId, actor));
         vm.startPrank(actor);
-        try store.withdraw(spokeId, shares, type(uint256).max) {} catch {}
+        try store.withdraw(spokeId, shares, new uint256[](0), type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -220,7 +220,7 @@ contract Handler is Test {
         address actor = _actor(actorSeed);
         shares = bound(shares, 0, store.getReceiptShares(spokeB, actor));
         vm.startPrank(actor);
-        try store.withdraw(spokeB, shares, type(uint256).max) {} catch {}
+        try store.withdraw(spokeB, shares, new uint256[](0), type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -298,7 +298,7 @@ contract Handler is Test {
             uint256 shares = store.getReceiptShares(spokeId, actors[i]);
             if (shares == 0) continue;
             vm.prank(actors[i]);
-            try store.withdraw(spokeId, shares, type(uint256).max) {} catch {}
+            try store.withdraw(spokeId, shares, new uint256[](0), type(uint256).max) {} catch {}
         }
         vm.prank(governor);
         try store.removePool(spokeId) {

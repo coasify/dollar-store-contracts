@@ -95,10 +95,10 @@ contract DepositReceiverTest is Test {
 
         vm.prank(zap);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, 500e6, 0));
-        store.withdraw(spoke, 500e6, block.timestamp);
+        store.withdraw(spoke, 500e6, new uint256[](0), block.timestamp);
 
         vm.prank(user);
-        store.withdraw(spoke, 500e6, block.timestamp);
+        store.withdraw(spoke, 500e6, new uint256[](0), block.timestamp);
         assertEq(rlusd.balanceOf(user), 500e18, "receiver exits to its own wallet");
     }
 
