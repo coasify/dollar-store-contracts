@@ -15,7 +15,7 @@ import {PegLib} from "./PegLib.sol";
 /// @notice The full directed-queue swap engine (route classification + reserve-aware fills + FIFO
 ///         same-direction settlement + cancel) extracted out of DollarStore so the
 ///         implementation fits under the EIP-170 24576-byte runtime limit while still shipping the
-///         complete feature set in a single deployment. The state-changing entrypoints (swap,
+///         complete feature set in a single deployment. The state-changing entrypoints (swapOrQueue,
 ///         swapExactInput, processQueue, triggerSpokeQueues, cancelPosition) are `public`, so
 ///         DollarStore reaches them via DELEGATECALL: they run in the proxy storage context (same
 ///         ERC-7201 slots) and msg.sender / block.timestamp are preserved. This is the accepted cost
@@ -47,12 +47,13 @@ library SwapRouteLib {
 
     // Re-declared so library code can emit them; under delegatecall they log from the proxy address.
     event Swap(
-        address indexed user,
+        address indexed caller,
         address indexed offerAsset,
         address indexed wantAsset,
+        address recipient,
         uint256 amountIn,
-        uint256 amountFilled,
-        uint256 amountQueued
+        uint256 amountOut,
+        uint256 amountInQueued
     );
     event SpokeSwapRouted(address indexed user, address indexed via, uint256 amount);
     event QueueJoined(
@@ -70,42 +71,38 @@ library SwapRouteLib {
     // ============ Public entrypoints (delegatecall from DollarStore) ============
 
     /// @notice Directed swap: opposite-queue match -> reserves (if same-direction queue empty) -> queue
-    ///         the remainder (see IDollarStore.swap). Gating (nonReentrant/whenNotPaused) is on the
+    ///         the remainder (see IDollarStore.swapOrQueue). Gating (nonReentrant/whenNotPaused) is on the
     ///         DollarStore wrapper.
-    function swap(
-        address offerAsset,
-        address wantAsset,
-        uint256 amount,
-        uint256 minAmountOut,
-        uint256 tip,
-        uint256 deadline
-    ) external returns (uint256 amountFilled, uint256 amountQueued) {
+    function swapOrQueue(address offerAsset, address wantAsset, uint256 amount, uint256 minAmountOut, uint256 deadline)
+        external
+        returns (uint256 amountIn, uint256 amountOut, uint256 amountInQueued, uint256 positionId)
+    {
         if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
-        if (tip != 0) revert IDollarStore.TipNotEnabled();
 
         Route memory route = validateRoute(offerAsset, wantAsset);
         PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset
 
-        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
+        uint256 amountUnits;
+        (amountUnits, amountIn) = NormalizationLib.toUnits(amount, route.offerScaling);
         if (amountUnits == 0) revert IDollarStore.ZeroAmount();
 
-        pullExact(offerAsset, nativePulled);
+        pullExact(offerAsset, amountIn);
 
-        amountFilled = fillDirected(route, offerAsset, wantAsset, amountUnits, true);
-        uint256 remaining = amountUnits - amountFilled;
+        uint256 filledUnits = fillDirected(route, offerAsset, wantAsset, amountUnits, true);
+        uint256 remainingUnits = amountUnits - filledUnits;
 
-        if (amountFilled < minAmountOut) revert IDollarStore.MinAmountNotMet(amountFilled, minAmountOut);
+        // Compare in native units: the output scales up exactly, so the caller's minimum is never rounded.
+        amountOut = NormalizationLib.toNative(filledUnits, route.wantScaling);
+        if (amountOut < minAmountOut) revert IDollarStore.MinAmountNotMet(wantAsset, amountOut, minAmountOut);
 
-        if (amountFilled > 0) {
-            IERC20(wantAsset).safeTransfer(msg.sender, NormalizationLib.toNative(amountFilled, route.wantScaling));
+        if (amountOut > 0) IERC20(wantAsset).safeTransfer(msg.sender, amountOut);
+
+        if (remainingUnits > 0) {
+            positionId = enqueueRemainder(offerAsset, wantAsset, route.spokePoolId, remainingUnits);
+            amountInQueued = NormalizationLib.toNative(remainingUnits, route.offerScaling);
         }
 
-        if (remaining > 0) {
-            enqueueRemainder(offerAsset, wantAsset, route.spokePoolId, remaining);
-            amountQueued = remaining;
-        }
-
-        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, amountFilled, amountQueued);
+        emit Swap(msg.sender, offerAsset, wantAsset, msg.sender, amountIn, amountOut, amountInQueued);
     }
 
     /// @notice All-or-nothing swap: fills fully from opposite queue + reserves or reverts. Never queues
@@ -115,29 +112,36 @@ library SwapRouteLib {
         address wantAsset,
         uint256 amount,
         uint256 minAmountOut,
+        address recipient,
         uint256 deadline
-    ) external returns (uint256 amountOut) {
-        if (block.timestamp > deadline) {
-            revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
-        }
+    ) external returns (uint256 amountIn, uint256 amountOut) {
+        if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
+        checkRecipient(recipient);
 
         Route memory route = validateRoute(offerAsset, wantAsset);
         PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset
 
-        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
+        uint256 amountUnits;
+        (amountUnits, amountIn) = NormalizationLib.toUnits(amount, route.offerScaling);
         if (amountUnits == 0) revert IDollarStore.ZeroAmount();
 
-        pullExact(offerAsset, nativePulled);
+        pullExact(offerAsset, amountIn);
 
-        uint256 filled = fillDirected(route, offerAsset, wantAsset, amountUnits, true);
-        if (filled < amountUnits) revert IDollarStore.InsufficientLiquidity(filled, amountUnits);
+        uint256 filledUnits = fillDirected(route, offerAsset, wantAsset, amountUnits, true);
+        if (filledUnits < amountUnits) {
+            revert IDollarStore.InsufficientLiquidity(
+                wantAsset,
+                NormalizationLib.toNative(filledUnits, route.wantScaling),
+                NormalizationLib.toNative(amountUnits, route.wantScaling)
+            );
+        }
 
-        // minAmountOut is a floor in normalized 6dp units, same convention as swap() (L-01).
-        if (filled < minAmountOut) revert IDollarStore.MinAmountNotMet(filled, minAmountOut);
-        amountOut = NormalizationLib.toNative(filled, route.wantScaling);
+        // Compare in native units: the output scales up exactly, so the caller's minimum is never rounded.
+        amountOut = NormalizationLib.toNative(filledUnits, route.wantScaling);
+        if (amountOut < minAmountOut) revert IDollarStore.MinAmountNotMet(wantAsset, amountOut, minAmountOut);
 
-        IERC20(wantAsset).safeTransfer(msg.sender, amountOut);
-        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, filled, 0);
+        IERC20(wantAsset).safeTransfer(recipient, amountOut);
+        emit Swap(msg.sender, offerAsset, wantAsset, recipient, amountIn, amountOut, 0);
     }
 
     /// @notice Instantly fillable amount for a swap, in native units of `wantAsset`
@@ -162,9 +166,11 @@ library SwapRouteLib {
         address wantAsset,
         address[] calldata via,
         uint256 amount,
+        address recipient,
         uint256 deadline
-    ) external returns (uint256 amountOut) {
+    ) external returns (uint256 amountIn, uint256 amountOut) {
         if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
+        checkRecipient(recipient);
         if (offerAsset == wantAsset) revert IDollarStore.SameAsset();
         if (via.length == 0) revert IDollarStore.InvalidRoute(offerAsset, wantAsset);
 
@@ -179,11 +185,13 @@ library SwapRouteLib {
         }
         PegLib.checkInflow(offerAsset);
 
-        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, sell[0].offerScaling);
+        uint256 amountUnits;
+        (amountUnits, amountIn) = NormalizationLib.toUnits(amount, sell[0].offerScaling);
         if (amountUnits == 0) revert IDollarStore.ZeroAmount();
 
-        pullExact(offerAsset, nativePulled);
+        pullExact(offerAsset, amountIn);
 
+        uint64 wantScaling = buy[0].wantScaling;
         uint256 remaining = amountUnits;
         for (uint256 i; i < via.length && remaining > 0; ++i) {
             // Leg two absorbs the hub asset into reserves, so one that fails the inflow check is skipped.
@@ -198,15 +206,27 @@ library SwapRouteLib {
             if (got == 0) continue;
             // Falls short only when a payout to a queued owner fails and that position is parked.
             uint256 paid = fillDirected(buy[i], via[i], wantAsset, got, true);
-            if (paid < got) revert IDollarStore.InsufficientLiquidity(amountUnits - remaining + paid, amountUnits);
+            if (paid < got) {
+                revert IDollarStore.InsufficientLiquidity(
+                    wantAsset,
+                    NormalizationLib.toNative(amountUnits - remaining + paid, wantScaling),
+                    NormalizationLib.toNative(amountUnits, wantScaling)
+                );
+            }
             remaining -= got;
             emit SpokeSwapRouted(msg.sender, via[i], got);
         }
-        if (remaining > 0) revert IDollarStore.InsufficientLiquidity(amountUnits - remaining, amountUnits);
+        if (remaining > 0) {
+            revert IDollarStore.InsufficientLiquidity(
+                wantAsset,
+                NormalizationLib.toNative(amountUnits - remaining, wantScaling),
+                NormalizationLib.toNative(amountUnits, wantScaling)
+            );
+        }
 
-        amountOut = NormalizationLib.toNative(amountUnits, buy[0].wantScaling);
-        IERC20(wantAsset).safeTransfer(msg.sender, amountOut);
-        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, amountUnits, 0);
+        amountOut = NormalizationLib.toNative(amountUnits, wantScaling);
+        IERC20(wantAsset).safeTransfer(recipient, amountOut);
+        emit Swap(msg.sender, offerAsset, wantAsset, recipient, amountIn, amountOut, 0);
     }
 
     /// @notice Settle the (offerAsset -> wantAsset) queue from reserves in FIFO order, bounded by
@@ -234,7 +254,7 @@ library SwapRouteLib {
             address offer = spokeIsWant ? h : spokeAsset;
             address want = spokeIsWant ? spokeAsset : h;
             // Settling a queued position absorbs its escrowed offer into reserves (deposit-equivalent),
-            // so gate the offer the same way swap / processQueue do. `deposit` is permissionless, so
+            // so gate the offer the same way swapOrQueue / processQueue do. `deposit` is permissionless, so
             // this trigger fires on any LP's spoke deposit; without this gate a healthy-asset deposit
             // would still settle a queue whose offer is deposit-paused or off-peg, absorbing a
             // discounted asset at par. Skip (do not revert) so an unrelated bad asset never DoS-es a
@@ -408,6 +428,11 @@ library SwapRouteLib {
         }
     }
 
+    /// @dev A swap's output cannot go to the zero address or stay in DollarStore, outside its reserves.
+    function checkRecipient(address recipient) internal view {
+        if (recipient == address(0) || recipient == address(this)) revert IDollarStore.InvalidRecipient(recipient);
+    }
+
     /// @dev Pull exactly `nativeAmount` of `asset`, rejecting fee-on-transfer via a balance check.
     function pullExact(address asset, uint256 nativeAmount) internal {
         uint256 balBefore = IERC20(asset).balanceOf(address(this));
@@ -525,7 +550,10 @@ library SwapRouteLib {
 
     /// @dev Escrow the remainder into the (offerAsset -> wantAsset) queue. Enforces cap and the
     ///      minimum order size, with the below-minimum exception only for the first position.
-    function enqueueRemainder(address offerAsset, address wantAsset, uint16 poolId, uint256 remaining) internal {
+    function enqueueRemainder(address offerAsset, address wantAsset, uint16 poolId, uint256 remaining)
+        internal
+        returns (uint256 positionId)
+    {
         QueueStorage.Layout storage qs = QueueStorage.layout();
         QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset, poolId)];
         if (q.positionCount >= QueueStorage.MAX_QUEUE_POSITIONS) revert IDollarStore.QueueFull(offerAsset, wantAsset);
@@ -534,7 +562,7 @@ library SwapRouteLib {
         // Below-minimum allowed only when opening the first position of an empty directed queue.
         if (remaining < minOrder && q.positionCount != 0) revert IDollarStore.OrderTooSmall(remaining, minOrder);
 
-        uint256 positionId = QueueLib.enqueue(qs, offerAsset, wantAsset, poolId, msg.sender, remaining);
+        positionId = QueueLib.enqueue(qs, offerAsset, wantAsset, poolId, msg.sender, remaining);
         emit QueueJoined(positionId, msg.sender, offerAsset, wantAsset, remaining, poolId);
     }
 }

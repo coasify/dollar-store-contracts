@@ -47,8 +47,12 @@ regress anything already enforced.
 
 - Rounding direction is deliberate and always favors the protocol (dust stays with the user on the
   way in, exact on the way out). No free-mint / inflation path.
-- Normalize to the internal unit (6dp) at the boundary; keep native units only at transfer edges.
-  `minAmountOut` and error payloads use a single, documented unit convention across all entrypoints.
+- Keep the books in the internal unit (6dp) and convert at the edge. Token amounts a caller passes
+  in, gets paid out, or sets as a minimum are native, and `MinAmountNotMet` / `InsufficientLiquidity`
+  report native amounts of the asset they name. Accounting values stay 6dp everywhere, including in
+  events and errors (`OrderTooSmall`, queue events); NatSpec states the unit of every swap, queue,
+  deposit and exit field. Compare a
+  minimum with the exact native output; never divide a minimum down to 6dp.
 - Guard against silent truncation on downcasts (`uintN`). Watch subtraction underflow on scaling
   like `10**(18 - feedDecimals)` (validate the input range so it cannot panic-revert a hot path).
 - No unchecked math unless proven safe with a comment. Prefer explicit bounds over relying on 0.8
@@ -86,7 +90,7 @@ regress anything already enforced.
 - `_authorizeUpgrade` is correctly gated (upgrader) and the new implementation preserves layout.
   Rehearse the full upgrade lifecycle (deploy -> init -> use -> schedule -> execute) on testnet.
 - Do not change existing public/external signatures (integrators are not upgradeable). New behavior
-  is additive: new functions/events/errors. `tip` stays reserved and `== 0`.
+  is additive: new functions/events/errors.
 
 ## 8. Denial of service, gas & loops
 

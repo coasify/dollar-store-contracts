@@ -72,7 +72,7 @@ contract SpokeWinddownHaircutTest is Test {
     function _queueSpokeToHub(address who, uint256 amt) internal {
         vm.startPrank(who);
         rlusd.approve(address(store), amt);
-        store.swap(address(rlusd), address(usdc), amt, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), amt, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -110,13 +110,13 @@ contract SpokeWinddownHaircutTest is Test {
         vm.startPrank(bob);
         rlusd.approve(address(store), 500e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp);
 
         // Risk-reducing hub->spoke stays live.
         usdc.approve(address(store), 500e6);
-        (uint256 filled,) = store.swap(address(usdc), address(rlusd), 500e6, 0, 0, block.timestamp);
+        (, uint256 filled,,) = store.swapOrQueue(address(usdc), address(rlusd), 500e6, 0, block.timestamp);
         vm.stopPrank();
-        assertEq(filled, 500e6, "hub->spoke allowed during winddown");
+        assertEq(filled, 500e18, "hub->spoke allowed during winddown");
     }
 
     function test_windDownSpoke_keepsWithdrawLive() public {
@@ -320,7 +320,7 @@ contract SpokeWinddownHaircutTest is Test {
         // A hub->spoke swap shifts composition (S down, D up) - the case that used to strand dust.
         vm.startPrank(bob);
         usdc.approve(address(store), 300e6);
-        store.swap(address(usdc), address(rlusd), 300e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(rlusd), 300e6, 0, block.timestamp);
         vm.stopPrank();
         // Now: spokeReserve 700, dlrsReserve 1300, hub usdc 1300, total shares 2000.
         assertEq(store.getReserve(spoke, address(rlusd)), 700e6, "spoke reserve after swap");

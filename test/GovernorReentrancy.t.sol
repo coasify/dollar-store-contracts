@@ -102,7 +102,7 @@ contract GovernorReentrancyTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        store.swap(address(usdc), address(evil), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(evil), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -111,7 +111,7 @@ contract GovernorReentrancyTest is Test {
         _deposit(bob, address(evil), 400e6);
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        (, uint256 queued) = store.swap(address(usdc), address(evil), 1_000e6, 0, 0, block.timestamp);
+        (,, uint256 queued,) = store.swapOrQueue(address(usdc), address(evil), 1_000e6, 0, block.timestamp);
         usdc.transfer(address(store), 5e6); // donation
         vm.stopPrank();
         assertEq(queued, 600e6, "remainder queued");
@@ -129,7 +129,7 @@ contract GovernorReentrancyTest is Test {
         _deposit(bob, address(evil), 1_000e6);
         vm.startPrank(alice);
         evil.approve(address(store), 200e6);
-        store.swap(address(evil), address(usdc), 200e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(evil), address(usdc), 200e6, 0, block.timestamp);
         vm.stopPrank();
         id = store.getUserQueuePositions(alice)[0];
     }
@@ -153,7 +153,7 @@ contract GovernorReentrancyTest is Test {
     function test_syncReserves_fromQueuePayout_blocked() public {
         vm.startPrank(alice);
         usdc.approve(address(store), 200e6);
-        store.swap(address(usdc), address(evil), 200e6, 0, 0, block.timestamp); // queues: no EVIL reserve
+        store.swapOrQueue(address(usdc), address(evil), 200e6, 0, block.timestamp); // queues: no EVIL reserve
         vm.stopPrank();
         uint256 id = store.getUserQueuePositions(alice)[0];
         _deposit(bob, address(evil), 1_000e6);

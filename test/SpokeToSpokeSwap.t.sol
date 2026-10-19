@@ -91,7 +91,7 @@ contract SpokeToSpokeSwapTest is Test {
     function _s2s(address who, address offer, address want, address via, uint256 amt) internal returns (uint256) {
         vm.startPrank(who);
         MockERC20(offer).approve(address(store), amt);
-        uint256 out = store.swapSpokeToSpoke(offer, want, _one(via), amt, block.timestamp);
+        (, uint256 out) = store.swapSpokeToSpoke(offer, want, _one(via), amt, who, block.timestamp);
         vm.stopPrank();
         return out;
     }
@@ -100,8 +100,17 @@ contract SpokeToSpokeSwapTest is Test {
         vm.startPrank(bob);
         MockERC20(offer).approve(address(store), amt);
         vm.expectRevert(err);
-        store.swapSpokeToSpoke(offer, want, _one(via), amt, block.timestamp);
+        store.swapSpokeToSpoke(offer, want, _one(via), amt, bob, block.timestamp);
         vm.stopPrank();
+    }
+
+    /// @dev InsufficientLiquidity for a spoke-to-spoke swap, given 6-decimal fill and request amounts:
+    ///      the error reports both in the wanted token's native decimals.
+    function _liq(address want, uint256 fillableUnits, uint256 requestedUnits) internal view returns (bytes memory) {
+        uint256 scale = 10 ** (MockERC20(want).decimals() - 6);
+        return abi.encodeWithSelector(
+            IDollarStore.InsufficientLiquidity.selector, want, fillableUnits * scale, requestedUnits * scale
+        );
     }
 
     function _one(address a) internal pure returns (address[] memory v) {
@@ -118,7 +127,7 @@ contract SpokeToSpokeSwapTest is Test {
     function _s2sMany(address offer, address want, address[] memory via, uint256 amt) internal returns (uint256 out) {
         vm.startPrank(bob);
         MockERC20(offer).approve(address(store), amt);
-        out = store.swapSpokeToSpoke(offer, want, via, amt, block.timestamp);
+        (, out) = store.swapSpokeToSpoke(offer, want, via, amt, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -126,14 +135,14 @@ contract SpokeToSpokeSwapTest is Test {
         vm.startPrank(bob);
         pyusd.approve(address(store), amt);
         vm.expectRevert(err);
-        store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amt, block.timestamp);
+        store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amt, bob, block.timestamp);
         vm.stopPrank();
     }
 
     function _swap(address who, address offer, address want, uint256 amt) internal returns (uint256 filled) {
         vm.startPrank(who);
         MockERC20(offer).approve(address(store), amt);
-        (filled,) = store.swap(offer, want, amt, 0, 0, block.timestamp);
+        (, filled,,) = store.swapOrQueue(offer, want, amt, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -180,8 +189,8 @@ contract SpokeToSpokeSwapTest is Test {
         vm.startPrank(bob);
         pyusd.approve(address(store), 400e6);
         vm.expectEmit(true, true, true, true, address(store));
-        emit IDollarStore.Swap(bob, address(pyusd), address(usdg), 400e6, 400e6, 0);
-        store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 400e6, block.timestamp);
+        emit IDollarStore.Swap(bob, address(pyusd), address(usdg), bob, 400e6, 400e18, 0);
+        store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 400e6, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -225,11 +234,7 @@ contract SpokeToSpokeSwapTest is Test {
         store.setMinDlrsReserve(spokeA, 800e6); // 200 above the floor
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(200e6), uint256(500e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            500e6
+            _liq(address(usdg), uint256(200e6), uint256(500e6)), address(pyusd), address(usdg), address(usdc), 500e6
         );
         assertEq(store.getDlrsReserve(spokeA), 1_000e6, "nothing moved");
     }
@@ -238,11 +243,7 @@ contract SpokeToSpokeSwapTest is Test {
         _seedDefault(); // claim backed by USDC only
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(0), uint256(500e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdt),
-            500e6
+            _liq(address(usdg), uint256(0), uint256(500e6)), address(pyusd), address(usdg), address(usdt), 500e6
         );
     }
 
@@ -251,11 +252,7 @@ contract SpokeToSpokeSwapTest is Test {
         _deposit(spokeB, address(usdg), 300e18);
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(300e6), uint256(500e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            500e6
+            _liq(address(usdg), uint256(300e6), uint256(500e6)), address(pyusd), address(usdg), address(usdc), 500e6
         );
         assertEq(store.getDlrsReserve(spokeA), 1_000e6, "first leg rolled back");
         assertEq(store.getReserve(spokeB, address(usdg)), 300e6, "nothing moved");
@@ -279,8 +276,8 @@ contract SpokeToSpokeSwapTest is Test {
         emit IDollarStore.SpokeSwapRouted(bob, address(usdc), 1_000e6);
         vm.expectEmit(true, true, false, true, address(store));
         emit IDollarStore.SpokeSwapRouted(bob, address(usdt), 200e6);
-        uint256 out = store.swapSpokeToSpoke(
-            address(pyusd), address(usdg), _two(address(usdc), address(usdt)), 1_200e6, block.timestamp
+        (, uint256 out) = store.swapSpokeToSpoke(
+            address(pyusd), address(usdg), _two(address(usdc), address(usdt)), 1_200e6, bob, block.timestamp
         );
         vm.stopPrank();
 
@@ -294,19 +291,13 @@ contract SpokeToSpokeSwapTest is Test {
 
     function test_s2s_singleHubAssetTooSmall_reverts() public {
         _seedSplit();
-        _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(1_000e6), uint256(1_200e6)),
-            _one(address(usdc)),
-            1_200e6
-        );
+        _expectS2sManyRevert(_liq(address(usdg), uint256(1_000e6), uint256(1_200e6)), _one(address(usdc)), 1_200e6);
     }
 
     function test_s2s_listRunsOut_reverts() public {
         _seedSplit();
         _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(1_500e6), uint256(1_600e6)),
-            _two(address(usdc), address(usdt)),
-            1_600e6
+            _liq(address(usdg), uint256(1_500e6), uint256(1_600e6)), _two(address(usdc), address(usdt)), 1_600e6
         );
         assertEq(store.getDlrsReserve(spokeA), 1_500e6, "nothing moved");
     }
@@ -358,8 +349,8 @@ contract SpokeToSpokeSwapTest is Test {
         emit IDollarStore.SpokeSwapRouted(bob, address(usdc), 1_000e6);
         vm.expectEmit(true, true, false, true, address(store));
         emit IDollarStore.SpokeSwapRouted(bob, address(usdc), 200e6);
-        uint256 out = store.swapSpokeToSpoke(
-            address(pyusd), address(usdg), _two(address(usdc), address(usdc)), 1_200e6, block.timestamp
+        (, uint256 out) = store.swapSpokeToSpoke(
+            address(pyusd), address(usdg), _two(address(usdc), address(usdc)), 1_200e6, bob, block.timestamp
         );
         vm.stopPrank();
 
@@ -383,9 +374,7 @@ contract SpokeToSpokeSwapTest is Test {
         _deposit(spokeB, address(usdg), 1_100e18);
 
         _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(1_100e6), uint256(1_200e6)),
-            _two(address(usdc), address(usdt)),
-            1_200e6
+            _liq(address(usdg), uint256(1_100e6), uint256(1_200e6)), _two(address(usdc), address(usdt)), 1_200e6
         );
         assertEq(store.getReserve(spokeB, address(usdg)), 1_100e6, "nothing moved");
     }
@@ -395,11 +384,7 @@ contract SpokeToSpokeSwapTest is Test {
         _deposit(spokeB, address(usdg), 300e18);
         _swap(dave, address(usdg), address(usdt), 1_000e18); // queues: no USDT in the hub
 
-        _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(300e6), uint256(500e6)),
-            _one(address(usdc)),
-            500e6
-        );
+        _expectS2sManyRevert(_liq(address(usdg), uint256(300e6), uint256(500e6)), _one(address(usdc)), 500e6);
         assertEq(store.getQueueDepth(address(usdg), address(usdt)), 1_000e6, "dave's escrow intact");
     }
 
@@ -477,11 +462,7 @@ contract SpokeToSpokeSwapTest is Test {
         _deposit(0, address(usdc), 200e6);
         _deposit(spokeB, address(usdg), 200e18);
 
-        _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, 100e6, 200e6),
-            _two(address(usdc), address(usdt)),
-            200e6
-        );
+        _expectS2sManyRevert(_liq(address(usdg), 100e6, 200e6), _two(address(usdc), address(usdt)), 200e6);
         assertEq(_s2sMany(address(pyusd), address(usdg), _one(address(usdt)), 200e6), 200e18, "USDT alone fills");
         assertEq(store.getQueueDepth(address(pyusd), address(usdc)), 100e6, "carol still waiting");
         _assertConservation();
@@ -503,9 +484,7 @@ contract SpokeToSpokeSwapTest is Test {
         address[] memory three = new address[](3);
         (three[0], three[1], three[2]) = (address(usdc), address(usdt), address(usds));
 
-        _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, 100e6, 200e6), three, 200e6
-        );
+        _expectS2sManyRevert(_liq(address(usdg), 100e6, 200e6), three, 200e6);
         assertEq(_s2sMany(address(pyusd), address(usdg), _two(address(usdt), address(usds)), 200e6), 200e18);
         assertEq(store.getQueueDepth(address(usdt), address(pyusd)), 0, "queued buyer filled");
         assertEq(store.getQueueDepth(address(usdg), address(usds)), 0, "queued seller filled");
@@ -526,8 +505,8 @@ contract SpokeToSpokeSwapTest is Test {
         emit IDollarStore.SpokeSwapRouted(bob, address(usdc), 300e6);
         vm.expectEmit(true, true, false, true, address(store));
         emit IDollarStore.SpokeSwapRouted(bob, address(usdt), 700e6);
-        uint256 out = store.swapSpokeToSpoke(
-            address(pyusd), address(usdg), _two(address(usdc), address(usdt)), 1_000e6, block.timestamp
+        (, uint256 out) = store.swapSpokeToSpoke(
+            address(pyusd), address(usdg), _two(address(usdc), address(usdt)), 1_000e6, bob, block.timestamp
         );
         vm.stopPrank();
 
@@ -566,11 +545,12 @@ contract SpokeToSpokeSwapTest is Test {
         vm.startPrank(bob);
         pyusd.approve(address(store), amount);
         if (amount <= carry) {
-            assertEq(store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount, block.timestamp), amount * 1e12);
+            (, uint256 out) = store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount, bob, block.timestamp);
+            assertEq(out, amount * 1e12);
             _assertConservation();
         } else {
-            vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, carry, amount));
-            store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount, block.timestamp);
+            vm.expectRevert(_liq(address(usdg), carry, amount));
+            store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount, bob, block.timestamp);
         }
         vm.stopPrank();
     }
@@ -661,15 +641,13 @@ contract SpokeToSpokeSwapTest is Test {
         vm.startPrank(bob);
         pyusd.approve(address(store), amount * 1e6);
         if (amount <= best) {
-            assertEq(
-                store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount * 1e6, block.timestamp), amount * 1e18
-            );
+            (, uint256 out) =
+                store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount * 1e6, bob, block.timestamp);
+            assertEq(out, amount * 1e18);
             _assertConservation();
         } else {
-            vm.expectRevert(
-                abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, best * 1e6, amount * 1e6)
-            );
-            store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount * 1e6, block.timestamp);
+            vm.expectRevert(_liq(address(usdg), best * 1e6, amount * 1e6));
+            store.swapSpokeToSpoke(address(pyusd), address(usdg), via, amount * 1e6, bob, block.timestamp);
         }
         vm.stopPrank();
     }
@@ -752,13 +730,7 @@ contract SpokeToSpokeSwapTest is Test {
         assertTrue(store.isQueuePositionParked(daveId), "dave parked by the first entry");
         vm.revertToState(snap);
 
-        _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, 900e6, 1_000e6),
-            address(pyusd),
-            address(usdg),
-            address(usdt),
-            1_000e6
-        );
+        _expectS2sRevert(_liq(address(usdg), 900e6, 1_000e6), address(pyusd), address(usdg), address(usdt), 1_000e6);
         store.processQueue(address(pyusd), address(usdt), 8);
         assertTrue(store.isQueuePositionParked(daveId), "processQueue parks dave");
         assertEq(store.getDlrsReserve(spokeA), 1_000e6, "nothing paid to dave");
@@ -778,11 +750,7 @@ contract SpokeToSpokeSwapTest is Test {
         usdt.setBlocked(dave, true);
 
         // Dave's 100 ahead takes the whole 100 claim, so USDT is sized at 0 both times and no payout is tried.
-        _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, 0, 100e6),
-            _two(address(usdt), address(usdt)),
-            100e6
-        );
+        _expectS2sManyRevert(_liq(address(usdg), 0, 100e6), _two(address(usdt), address(usdt)), 100e6);
         assertFalse(store.isQueuePositionParked(daveId), "dave not parked");
         store.processQueue(address(pyusd), address(usdt), 8);
         assertTrue(store.isQueuePositionParked(daveId), "processQueue parks dave");
@@ -802,13 +770,7 @@ contract SpokeToSpokeSwapTest is Test {
         usdg.setBlocked(carol, true);
 
         // Spoke B holds 1,000 USDG, but carol's 100 ahead counts as paid, so USDT is sized at 900.
-        _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, 900e6, 1_000e6),
-            address(pyusd),
-            address(usdg),
-            address(usdt),
-            1_000e6
-        );
+        _expectS2sRevert(_liq(address(usdg), 900e6, 1_000e6), address(pyusd), address(usdg), address(usdt), 1_000e6);
         store.processQueue(address(usdt), address(usdg), 8);
         assertTrue(store.isQueuePositionParked(carolId), "processQueue parks carol");
         assertEq(store.getReserve(spokeB, address(usdg)), 1_000e6, "nothing paid to carol");
@@ -827,13 +789,7 @@ contract SpokeToSpokeSwapTest is Test {
         assertEq(store.getSwapQuote(address(usdt), address(usdg), viaOut), 100e18, "quote promises 100");
         // Paying carol fails, so she is parked and her USDT stays in escrow. Spoke A has no hub claim to use
         // instead, so the first leg fills nothing and the call reverts, undoing her parking.
-        _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, 0, 100e6),
-            address(pyusd),
-            address(usdg),
-            address(usdt),
-            100e6
-        );
+        _expectS2sRevert(_liq(address(usdg), 0, 100e6), address(pyusd), address(usdg), address(usdt), 100e6);
         (uint256 visited,) = store.processQueue(address(usdt), address(pyusd), 8);
         assertEq(visited, 0, "no PYUSD in spoke A to try paying carol from");
         assertFalse(store.isQueuePositionParked(carolId), "so processQueue cannot park her");
@@ -904,11 +860,7 @@ contract SpokeToSpokeSwapTest is Test {
         _deposit(spokeA, address(usdc), 300e6);
         _deposit(spokeB, address(usdg), 1_000e18);
 
-        _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(300e6), uint256(500e6)),
-            _one(address(usdc)),
-            500e6
-        );
+        _expectS2sManyRevert(_liq(address(usdg), uint256(300e6), uint256(500e6)), _one(address(usdc)), 500e6);
     }
 
     function test_s2s_leavesOtherEscrowOfOfferedAsset() public {
@@ -936,11 +888,7 @@ contract SpokeToSpokeSwapTest is Test {
         store.setMinDlrsReserve(spokeA, 0);
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(0), uint256(500e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            500e6
+            _liq(address(usdg), uint256(0), uint256(500e6)), address(pyusd), address(usdg), address(usdc), 500e6
         );
 
         store.processQueue(address(pyusd), address(usdc), 9);
@@ -958,11 +906,7 @@ contract SpokeToSpokeSwapTest is Test {
         vm.prank(unpauser);
         store.unpauseDeposits(address(usdt));
 
-        _expectS2sManyRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(0), uint256(500e6)),
-            _one(address(usdt)),
-            500e6
-        );
+        _expectS2sManyRevert(_liq(address(usdg), uint256(0), uint256(500e6)), _one(address(usdt)), 500e6);
 
         store.processQueue(address(usdt), address(usdg), 9);
         assertEq(_s2s(bob, address(pyusd), address(usdg), address(usdt), 500e6), 500e18, "fills once the line clears");
@@ -995,11 +939,7 @@ contract SpokeToSpokeSwapTest is Test {
         store.setMinDlrsReserve(spokeA, 700e6); // room for dave only
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(0), uint256(200e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            200e6
+            _liq(address(usdg), uint256(0), uint256(200e6)), address(pyusd), address(usdg), address(usdc), 200e6
         );
         assertEq(store.getQueueDepth(address(pyusd), address(usdc)), 300e6, "dave still first in line");
     }
@@ -1042,11 +982,7 @@ contract SpokeToSpokeSwapTest is Test {
 
         assertEq(quoted, 300e18, "only 300 of the 500 can fill");
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(300e6), uint256(500e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            500e6
+            _liq(address(usdg), uint256(300e6), uint256(500e6)), address(pyusd), address(usdg), address(usdc), 500e6
         );
     }
 
@@ -1122,11 +1058,7 @@ contract SpokeToSpokeSwapTest is Test {
         feed.setUpdatedAt(block.timestamp); // offered asset fresh, USDC's feed left behind
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(0), uint256(100e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            100e6
+            _liq(address(usdg), uint256(0), uint256(100e6)), address(pyusd), address(usdg), address(usdc), 100e6
         );
     }
 
@@ -1138,7 +1070,7 @@ contract SpokeToSpokeSwapTest is Test {
         vm.startPrank(bob);
         pyusd.approve(address(store), 100e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PriceStale.selector, address(pyusd), feed.updatedAt()));
-        store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 100e6, block.timestamp);
+        store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 100e6, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -1170,11 +1102,7 @@ contract SpokeToSpokeSwapTest is Test {
         store.pauseDeposits(address(usdc));
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(0), uint256(100e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            100e6
+            _liq(address(usdg), uint256(0), uint256(100e6)), address(pyusd), address(usdg), address(usdc), 100e6
         );
     }
 
@@ -1183,12 +1111,61 @@ contract SpokeToSpokeSwapTest is Test {
         usdcFeed.setAnswer(0.9e8);
 
         _expectS2sRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(0), uint256(100e6)),
-            address(pyusd),
-            address(usdg),
-            address(usdc),
-            100e6
+            _liq(address(usdg), uint256(0), uint256(100e6)), address(pyusd), address(usdg), address(usdc), 100e6
         );
+    }
+
+    /// @notice The second leg pays out less than its first leg took: a frozen seller waiting on the
+    ///         second leg is parked and the wanted spoke has no reserve left to replace it. The first
+    ///         entry already carried 50, so the error reports 50 of 150 in native USDG, and the
+    ///         rollback leaves the seller unparked.
+    function test_s2s_secondLegPaysLess_reportsProgressInNativeWant() public {
+        _swap(dave, address(usdg), address(usdt), 100e18); // spoke B has no claim: queued
+        uint256 daveId = store.getUserQueuePositions(dave)[0];
+        _deposit(spokeA, address(usdc), 50e6); // A's claim: 50 backed by USDC
+        _deposit(spokeA, address(usdt), 100e6); // and 100 backed by USDT
+        _deposit(spokeB, address(usdg), 50e18); // B's reserve: 50
+        usdt.setBlocked(dave, true);
+
+        _expectS2sManyRevert(_liq(address(usdg), 50e6, 150e6), _two(address(usdc), address(usdt)), 150e6);
+
+        assertFalse(store.isQueuePositionParked(daveId), "parking rolled back");
+        (,,, uint256 daveUnits,,) = store.getQueuePosition(daveId);
+        assertEq(daveUnits, 100e6, "seller untouched");
+        assertEq(store.getReserve(spokeB, address(usdg)), 50e6, "B's reserve untouched");
+        assertEq(store.getDlrsReserve(spokeA), 150e6, "A's claim untouched");
+    }
+
+    /// @notice A recipient the wanted spoke asset refuses reverts the whole call, including a seller
+    ///         already paid on the second leg; a caller refused by it can still send to an allowed
+    ///         recipient.
+    function test_s2s_recipientRefusedByWantAsset_revertsAll() public {
+        _swap(dave, address(usdg), address(usdc), 100e18); // spoke B has no claim: queued
+        uint256 daveId = store.getUserQueuePositions(dave)[0];
+        _seedDefault();
+        usdg.setBlocked(carol, true);
+        uint256 daveUsdc = usdc.balanceOf(dave);
+
+        vm.startPrank(bob);
+        pyusd.approve(address(store), 100e6);
+        vm.expectRevert(bytes("blocked"));
+        store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 100e6, carol, block.timestamp);
+        vm.stopPrank();
+
+        (,,, uint256 daveUnits,,) = store.getQueuePosition(daveId);
+        assertEq(daveUnits, 100e6, "seller's fill rolled back");
+        assertEq(usdc.balanceOf(dave), daveUsdc, "seller's payout rolled back");
+        assertEq(store.getDlrsReserve(spokeA), 1_000e6, "A's claim untouched");
+
+        usdg.setBlocked(carol, false);
+        usdg.setBlocked(bob, true);
+        vm.startPrank(bob);
+        (uint256 amountIn, uint256 out) =
+            store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 100e6, carol, block.timestamp);
+        vm.stopPrank();
+        assertEq(amountIn, 100e6, "bob paid");
+        assertEq(out, 100e18, "carol received");
+        assertEq(usdg.balanceOf(carol), 1_000_000e18 + 100e18, "to the recipient, not the refused caller");
     }
 
     function test_s2s_callerFrozenOnWantAsset_reverts() public {
@@ -1272,7 +1249,7 @@ contract SpokeToSpokeSwapTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, block.timestamp - 1, block.timestamp)
         );
-        store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 100e6, block.timestamp - 1);
+        store.swapSpokeToSpoke(address(pyusd), address(usdg), _one(address(usdc)), 100e6, bob, block.timestamp - 1);
         vm.stopPrank();
     }
 

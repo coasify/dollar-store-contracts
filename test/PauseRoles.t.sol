@@ -463,7 +463,7 @@ contract PauseRolesTest is Test {
         usdc.mint(who, amount);
         vm.startPrank(who);
         usdc.approve(address(store), amount);
-        store.swap(address(usdc), address(want), amount, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(want), amount, 0, block.timestamp);
         vm.stopPrank();
     }
 

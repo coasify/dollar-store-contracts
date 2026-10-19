@@ -92,11 +92,8 @@ contract Handler is Test {
         return aFirst ? (usdc, usdt) : (usdt, usdc);
     }
 
-    function _trackQueued(address actor, uint256 queued) internal {
-        if (queued > 0) {
-            uint256[] memory ps = store.getUserQueuePositions(actor);
-            if (ps.length > 0) positionIds.push(ps[ps.length - 1]);
-        }
+    function _trackQueued(uint256 positionId) internal {
+        if (positionId != 0) positionIds.push(positionId);
     }
 
     // ============ Hub actions ============
@@ -127,10 +124,10 @@ contract Handler is Test {
         offer.mint(actor, amount);
         vm.startPrank(actor);
         offer.approve(address(store), amount);
-        try store.swap(address(offer), address(want), amount, 0, 0, type(uint256).max) returns (
-            uint256, uint256 queued
+        try store.swapOrQueue(address(offer), address(want), amount, 0, type(uint256).max) returns (
+            uint256, uint256, uint256, uint256 positionId
         ) {
-            _trackQueued(actor, queued);
+            _trackQueued(positionId);
         } catch {}
         vm.stopPrank();
     }
@@ -173,10 +170,10 @@ contract Handler is Test {
         offer.mint(actor, amount);
         vm.startPrank(actor);
         offer.approve(address(store), amount);
-        try store.swap(address(offer), address(rlusd), amount, 0, 0, type(uint256).max) returns (
-            uint256, uint256 queued
+        try store.swapOrQueue(address(offer), address(rlusd), amount, 0, type(uint256).max) returns (
+            uint256, uint256, uint256, uint256 positionId
         ) {
-            _trackQueued(actor, queued);
+            _trackQueued(positionId);
         } catch {}
         vm.stopPrank();
     }
@@ -188,10 +185,10 @@ contract Handler is Test {
         rlusd.mint(actor, amount);
         vm.startPrank(actor);
         rlusd.approve(address(store), amount);
-        try store.swap(address(rlusd), address(want), amount, 0, 0, type(uint256).max) returns (
-            uint256, uint256 queued
+        try store.swapOrQueue(address(rlusd), address(want), amount, 0, type(uint256).max) returns (
+            uint256, uint256, uint256, uint256 positionId
         ) {
-            _trackQueued(actor, queued);
+            _trackQueued(positionId);
         } catch {}
         vm.stopPrank();
     }
@@ -236,10 +233,10 @@ contract Handler is Test {
         offer.mint(actor, amount);
         vm.startPrank(actor);
         offer.approve(address(store), amount);
-        try store.swap(address(offer), address(want), amount, 0, 0, type(uint256).max) returns (
-            uint256, uint256 queued
+        try store.swapOrQueue(address(offer), address(want), amount, 0, type(uint256).max) returns (
+            uint256, uint256, uint256, uint256 positionId
         ) {
-            _trackQueued(actor, queued);
+            _trackQueued(positionId);
         } catch {}
         vm.stopPrank();
     }
@@ -269,7 +266,7 @@ contract Handler is Test {
         vm.startPrank(actor);
         offer.approve(address(store), amount);
         vm.recordLogs();
-        try store.swapSpokeToSpoke(address(offer), address(want), via, amount, type(uint256).max) {
+        try store.swapSpokeToSpoke(address(offer), address(want), via, amount, actor, type(uint256).max) {
             s2sFills += 1;
             if (_routedCount() > 1) s2sSplits += 1;
         } catch {}

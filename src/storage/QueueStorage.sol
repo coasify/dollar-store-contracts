@@ -11,10 +11,9 @@ pragma solidity 0.8.24;
 ///        mapping(address => Queue) _queues;            // key = wanted stablecoin
 ///  v3: queue keyed by a DIRECTED PAIR (offerAsset -> wantAsset); a position escrows the
 ///      user's actual *offerAsset* (NOT DLRS). DLRS is never a public queue offer asset.
-///        struct QueuePosition { owner, offerAsset, wantAsset, offerAmount, tip, ... }
+///        struct QueuePosition { owner, offerAsset, wantAsset, offerAmount, ... }
 ///        mapping(bytes32 => Queue) queues;             // key = keccak256(offerAsset, wantAsset, poolId)
-///      Plus `totalEscrowedByAsset` for the 3-bucket solvency accounting, and a reserved
-///      `tip` field for a possible later priority feature.
+///      Plus `totalEscrowedByAsset` for the 3-bucket solvency accounting.
 /// -----------------------------------------------------------------------------------------
 /// @custom:security-contact admin@dollarstore.world
 library QueueStorage {
@@ -65,9 +64,6 @@ library QueueStorage {
         address wantAsset;
         /// @notice Remaining escrowed offerAsset (normalized 6dp); decreases on partial fills.
         uint256 offerAmount;
-        /// @notice RESERVED for a possible later priority feature. Always 0: a non-zero tip reverts
-        ///         TipNotEnabled. Reserved now so enabling tips later is purely additive.
-        uint256 tip;
         /// @notice Creation time; FIFO tiebreak.
         uint256 timestamp;
         /// @notice Next position id in the queue (0 = end).

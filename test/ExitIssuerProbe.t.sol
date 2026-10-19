@@ -122,7 +122,7 @@ contract ExitIssuerProbeTest is Test {
         vm.prank(bob);
         store.deposit(spoke, address(usdc), 500e6, block.timestamp);
         vm.prank(trader);
-        store.swapExactInput(address(usdc), address(pyusd), 100e6, 0, block.timestamp);
+        store.swapExactInput(address(usdc), address(pyusd), 100e6, 0, trader, block.timestamp);
         assertEq(store.getReserve(spoke, address(pyusd)), 0, "spoke fully bought out");
         assertEq(store.getDlrsReserve(spoke), 600e6);
     }
@@ -157,7 +157,7 @@ contract ExitIssuerProbeTest is Test {
         vm.prank(alice);
         store.deposit(spoke, address(usdc), 100e6, block.timestamp); // claim 100
         vm.prank(trader);
-        store.swapExactInput(address(pyusd), address(usdc), 100e6, 0, block.timestamp); // spends the claim
+        store.swapExactInput(address(pyusd), address(usdc), 100e6, 0, trader, block.timestamp); // spends the claim
         assertEq(store.getDlrsReserve(spoke), 0);
         assertEq(store.getReserve(spoke, address(pyusd)), 100e6);
 

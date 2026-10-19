@@ -138,7 +138,7 @@ set -a; source .env.sepolia; source .deployed.sepolia; set +a
 
 `DollarStore` links three external libraries - `SpokeAdminLib` (spoke create + reserve write-down /
 rescue), `SpokeLifecycleLib` (wind-down / haircut / removePool / withdraw), and `SwapRouteLib`
-(the directed-swap routing / fill / FIFO-settle engine used by swap / swapExactInput / swapSpokeToSpoke /
+(the directed-swap routing / fill / FIFO-settle engine used by swapOrQueue / swapExactInput / swapSpokeToSpoke /
 getSwapQuote / processQueue /
 cancelQueue) - so the implementation stays under the EIP-170 24576-byte limit while shipping the full
 feature set. `forge script` deploys all three libraries and links them automatically during the

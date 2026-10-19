@@ -59,7 +59,7 @@ contract SpokeQueueTriggerTest is Test {
     {
         vm.startPrank(who);
         offer.approve(address(store), amt);
-        (, queued) = store.swap(address(offer), address(want), amt, 0, 0, block.timestamp);
+        (,, queued,) = store.swapOrQueue(address(offer), address(want), amt, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -89,7 +89,7 @@ contract SpokeQueueTriggerTest is Test {
     function test_fundingDeposit_settlesSpokeToHubQueue() public {
         // Bob queues RLUSD->USDC with no DLRS side.
         uint256 q = _queue(bob, rlusd, usdc, 500e18);
-        assertEq(q, 500e6, "bob queued");
+        assertEq(q, 500e18, "bob queued, native RLUSD");
 
         // Alice funds the spoke with a hub asset; the new DLRS side settles bob's spoke->hub order.
         vm.startPrank(alice);

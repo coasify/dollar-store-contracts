@@ -110,7 +110,7 @@ contract ParkedEscrowTest is Test {
 
     function _sellPyusdForUsdc(address who, uint256 amt) internal returns (uint256 id) {
         vm.prank(who);
-        (, uint256 queued) = store.swap(address(pyusd), address(usdc), amt, 0, 0, block.timestamp);
+        (,, uint256 queued,) = store.swapOrQueue(address(pyusd), address(usdc), amt, 0, block.timestamp);
         assertEq(queued, amt, "queued: spoke has no claim to pay from");
         uint256[] memory ids = store.getUserQueuePositions(who);
         id = ids[ids.length - 1];
@@ -238,9 +238,9 @@ contract ParkedEscrowTest is Test {
     ///      her, which parks it. Bob's own remainder queues and he cancels it, leaving both lines empty.
     function _parkOneUnit() internal {
         vm.prank(alice);
-        store.swap(address(pyusd), address(usdc), 1, 0, 0, block.timestamp);
+        store.swapOrQueue(address(pyusd), address(usdc), 1, 0, block.timestamp);
         vm.prank(bob);
-        store.swap(address(usdc), address(pyusd), 1, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(pyusd), 1, 0, block.timestamp);
         uint256 bobId = store.getUserQueuePositions(bob)[0];
         vm.prank(bob);
         store.cancelQueue(bobId);
@@ -253,7 +253,7 @@ contract ParkedEscrowTest is Test {
             _parkOneUnit();
         }
         vm.prank(alice);
-        store.swap(address(usds), address(pyusd), 100e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usds), address(pyusd), 100e18, 0, block.timestamp);
         assertEq(store.getUserQueuePositions(alice).length, parked + 1);
 
         uint256 pyBefore = pyusd.balanceOf(alice);
@@ -284,7 +284,7 @@ contract ParkedEscrowTest is Test {
         _parkOneUnit();
         _parkOneUnit();
         vm.prank(alice);
-        store.swap(address(usds), address(pyusd), 100e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usds), address(pyusd), 100e18, 0, block.timestamp);
         uint256[] memory ids = store.getUserQueuePositions(alice);
         assertEq(ids.length, 3);
         (uint256 parkedA, uint256 parkedB, uint256 queued) = (ids[0], ids[1], ids[2]);
@@ -328,7 +328,7 @@ contract ParkedEscrowTest is Test {
     function test_settle_payoutIssuerDecides_offerAssetBlockDoesNotPark() public {
         // Alice queues USDC -> PYUSD; the spoke holds no PYUSD, so nothing can pay her yet.
         vm.prank(alice);
-        (, uint256 queued) = store.swap(address(usdc), address(pyusd), 100e6, 0, 0, block.timestamp);
+        (,, uint256 queued,) = store.swapOrQueue(address(usdc), address(pyusd), 100e6, 0, block.timestamp);
         assertEq(queued, 100e6);
         uint256 id = store.getUserQueuePositions(alice)[0];
 
@@ -442,7 +442,7 @@ contract ParkedEscrowTest is Test {
         evil.mint(alice, 1_000e6);
         vm.startPrank(alice);
         evil.approve(address(store), type(uint256).max);
-        store.swap(address(evil), address(usds), 1_000e6, 0, 0, block.timestamp); // no USDS: queued
+        store.swapOrQueue(address(evil), address(usds), 1_000e6, 0, block.timestamp); // no USDS: queued
         vm.stopPrank();
         uint256 id = store.getUserQueuePositions(alice)[0];
 

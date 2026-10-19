@@ -73,6 +73,8 @@ contract NormalizationLibTest is Test {
 
         (uint256 units, uint256 pulled) = n.toUnits(native, sf);
         assertLe(pulled, native, "never pull more than provided");
+        assertLt(native - pulled, sf, "drops less than one unit");
+        assertEq(units * sf, pulled, "pulled is whole units");
         assertEq(n.toNative(units, sf), pulled, "round-trip is exact");
     }
 }

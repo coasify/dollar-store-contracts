@@ -70,7 +70,7 @@ contract SwapQuoteTest is Test {
     function _swap(address who, ERC20 offer, ERC20 want, uint256 amt) internal returns (uint256 filled) {
         vm.startPrank(who);
         offer.approve(address(store), amt);
-        (filled,) = store.swap(address(offer), address(want), amt, 0, 0, block.timestamp);
+        (, filled,,) = store.swapOrQueue(address(offer), address(want), amt, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -81,11 +81,13 @@ contract SwapQuoteTest is Test {
         uint256 snap = vm.snapshotState();
         vm.startPrank(who);
         offer.approve(address(store), amt);
-        try store.swapExactInput(address(offer), address(want), amt, 0, block.timestamp) returns (uint256 out) {
+        try store.swapExactInput(address(offer), address(want), amt, 0, who, block.timestamp) returns (
+            uint256, uint256 out
+        ) {
             filled = out;
         } catch (bytes memory err) {
             assertEq(bytes4(err), IDollarStore.InsufficientLiquidity.selector, "only a liquidity shortfall");
-            (filled,) = abi.decode(_args(err), (uint256, uint256));
+            (, filled,) = abi.decode(_args(err), (address, uint256, uint256));
         }
         vm.stopPrank();
         vm.revertToState(snap);
@@ -185,7 +187,7 @@ contract SwapQuoteTest is Test {
     function _queueOpposite(uint256 amt) internal {
         vm.startPrank(carol);
         usdt.approve(address(store), amt);
-        (uint256 filled,) = store.swap(address(usdt), address(usdc), amt, 0, 0, block.timestamp);
+        (, uint256 filled,,) = store.swapOrQueue(address(usdt), address(usdc), amt, 0, block.timestamp);
         vm.stopPrank();
         assertEq(filled, 0, "queued: no USDC in the hub");
     }
@@ -227,7 +229,7 @@ contract SwapQuoteTest is Test {
         usdc.approve(address(store), 100e6);
         if (err.length == 4) vm.expectPartialRevert(bytes4(err));
         else vm.expectRevert(err);
-        store.swapExactInput(address(usdc), address(usdt), 100e6, 0, block.timestamp);
+        store.swapExactInput(address(usdc), address(usdt), 100e6, 0, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -286,7 +288,7 @@ contract SwapQuoteTest is Test {
         vm.startPrank(bob);
         usdc.approve(address(store), 100e6);
         vm.expectRevert(bytes("blocked"));
-        store.swapExactInput(address(usdc), address(usdt), 100e6, 0, block.timestamp);
+        store.swapExactInput(address(usdc), address(usdt), 100e6, 0, bob, block.timestamp);
         vm.stopPrank();
     }
 

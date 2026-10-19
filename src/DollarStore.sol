@@ -655,18 +655,17 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @inheritdoc IDollarStore
     /// @dev Fill order: exact-opposite queue -> protocol reserves (only if the same-direction
     ///      queue is empty) -> queue the remainder. Hub-hub swaps are reserve-neutral (no DLRS
-    ///      mint/burn) — they move reserve value 1:1 between assets. tip must be 0 (reserved for a later upgrade).
-    function swap(
-        address offerAsset,
-        address wantAsset,
-        uint256 amount,
-        uint256 minAmountOut,
-        uint256 tip,
-        uint256 deadline
-    ) external override nonReentrant whenNotPaused returns (uint256 amountFilled, uint256 amountQueued) {
+    ///      mint/burn) — they move reserve value 1:1 between assets.
+    function swapOrQueue(address offerAsset, address wantAsset, uint256 amount, uint256 minAmountOut, uint256 deadline)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 amountIn, uint256 amountOut, uint256 amountInQueued, uint256 positionId)
+    {
         // Directed-swap engine lives in SwapRouteLib (delegatecall, same storage, preserves
         // msg.sender). The nonReentrant + whenNotPaused guards here hold for the whole delegated call.
-        return SwapRouteLib.swap(offerAsset, wantAsset, amount, minAmountOut, tip, deadline);
+        return SwapRouteLib.swapOrQueue(offerAsset, wantAsset, amount, minAmountOut, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -676,9 +675,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         address wantAsset,
         uint256 amount,
         uint256 minAmountOut,
+        address recipient,
         uint256 deadline
-    ) external override nonReentrant whenNotPaused returns (uint256 amountOut) {
-        return SwapRouteLib.swapExactInput(offerAsset, wantAsset, amount, minAmountOut, deadline);
+    ) external override nonReentrant whenNotPaused returns (uint256 amountIn, uint256 amountOut) {
+        return SwapRouteLib.swapExactInput(offerAsset, wantAsset, amount, minAmountOut, recipient, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -687,9 +687,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         address wantAsset,
         address[] calldata via,
         uint256 amount,
+        address recipient,
         uint256 deadline
-    ) external override nonReentrant whenNotPaused returns (uint256 amountOut) {
-        return SwapRouteLib.swapSpokeToSpoke(offerAsset, wantAsset, via, amount, deadline);
+    ) external override nonReentrant whenNotPaused returns (uint256 amountIn, uint256 amountOut) {
+        return SwapRouteLib.swapSpokeToSpoke(offerAsset, wantAsset, via, amount, recipient, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -799,8 +800,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     // The directed-swap fill / FIFO settle / enqueue / park / cancel machinery lives in
-    // SwapRouteLib (linked, delegatecall over the same ERC-7201 storage). swap / swapExactInput /
-    // processQueue / cancelQueue / _triggerSpokeQueues delegate into it. Kept out of this
+    // SwapRouteLib (linked, delegatecall over the same ERC-7201 storage). swapOrQueue / swapExactInput /
+    // swapSpokeToSpoke / processQueue / cancelQueue / _triggerSpokeQueues delegate into it. Kept out of this
     // implementation to fit under the EIP-170 24576-byte runtime limit (accepted delegatecall cost on
     // the swap path).
 

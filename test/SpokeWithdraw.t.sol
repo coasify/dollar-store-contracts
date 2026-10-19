@@ -158,9 +158,10 @@ contract SpokeWithdrawTest is Test {
 
         // A seller who tries the sanctioned path is capped by the floor.
         vm.prank(trader);
-        (uint256 filled, uint256 queued) = store.swap(address(rlusd), address(usdc), 500_000e18, 0, 0, block.timestamp);
+        (, uint256 filled, uint256 queued,) =
+            store.swapOrQueue(address(rlusd), address(usdc), 500_000e18, 0, block.timestamp);
         assertEq(filled, 100_000e6);
-        assertEq(queued, 400_000e6);
+        assertEq(queued, 400_000e18);
 
         // The LP route: deposit 900k RLUSD, withdraw everything. Pool is 600k RLUSD + 900k claim.
         uint256 rlBefore = rlusd.balanceOf(alice);

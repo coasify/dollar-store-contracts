@@ -101,27 +101,28 @@ contract HubDepositWithdrawTest is Test {
         assertEq(dai.balanceOf(address(store)), 15e17, "native pulled");
     }
 
-    // ============ L-01: swapExactInput minAmountOut is in normalized units ============
+    // ============ swapExactInput minAmountOut is in the wanted token's native units ============
 
-    function test_swapExactInput_minAmountOut_isNormalizedUnits() public {
+    function test_swapExactInput_minAmountOut_isNativeWantUnits() public {
         // Seed DAI (18dp) reserves so a usdc -> dai swap can fill fully from reserves.
-        _deposit(bob, dai, 1_000e18); // dai reserve = 1_000e6 (normalized 6dp)
+        _deposit(bob, dai, 1_000e18);
 
         vm.startPrank(alice);
-        usdc.approve(address(store), 1_000e6);
+        usdc.approve(address(store), 2_000e6);
 
-        // filled is 1_000e6 in normalized 6dp units, and minAmountOut uses the SAME units as swap().
-        // A floor just above the normalized fill must revert. Under the old native-unit comparison
-        // (amountOut = 1_000e18) this would have wrongly passed.
+        // 1,000 USDC delivers exactly 1,000e18 DAI. A minimum one wei above that must revert: dividing
+        // the minimum down to 6 decimals would round it to 1,000e6 units and let the swap through.
         vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.MinAmountNotMet.selector, uint256(1_000e6), uint256(1_000e6 + 1))
+            abi.encodeWithSelector(IDollarStore.MinAmountNotMet.selector, address(dai), 1_000e18, 1_000e18 + 1)
         );
-        store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e6 + 1, block.timestamp);
+        store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e18 + 1, alice, block.timestamp);
 
-        // The exact normalized fill as the floor proceeds and delivers native DAI (1_000e18).
-        uint256 out = store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e6, block.timestamp);
+        // The exact native output as the minimum proceeds.
+        (uint256 amountIn, uint256 out) =
+            store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e18, alice, block.timestamp);
         vm.stopPrank();
-        assertEq(out, 1_000e18, "delivers native DAI, floor met in normalized units");
+        assertEq(amountIn, 1_000e6, "pulled");
+        assertEq(out, 1_000e18, "delivers native DAI");
     }
 
     function test_deposit_revertsZeroUnits() public {

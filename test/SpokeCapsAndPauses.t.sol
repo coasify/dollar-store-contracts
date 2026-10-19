@@ -143,11 +143,11 @@ contract SpokeCapsAndPausesTest is Test {
         vm.startPrank(bob);
         usdc.approve(address(store), 500e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.swap(address(usdc), address(rlusd), 500e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(rlusd), 500e6, 0, block.timestamp);
 
         rlusd.approve(address(store), 500e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -155,7 +155,7 @@ contract SpokeCapsAndPausesTest is Test {
         // Queue a spoke->hub order while live, then pause and try to process it.
         vm.startPrank(bob);
         rlusd.approve(address(store), 500e18);
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp); // queues
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp); // queues
         vm.stopPrank();
 
         vm.prank(pauser);
@@ -180,7 +180,7 @@ contract SpokeCapsAndPausesTest is Test {
     function test_pausePool_leavesCancelLive() public {
         vm.startPrank(bob);
         rlusd.approve(address(store), 500e18);
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp); // queues
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp); // queues
         uint256 id = store.getUserQueuePositions(bob)[0];
         vm.stopPrank();
 
@@ -202,8 +202,8 @@ contract SpokeCapsAndPausesTest is Test {
 
         vm.startPrank(bob);
         usdc.approve(address(store), 500e6);
-        (uint256 filled,) = store.swap(address(usdc), address(rlusd), 500e6, 0, 0, block.timestamp);
+        (, uint256 filled,,) = store.swapOrQueue(address(usdc), address(rlusd), 500e6, 0, block.timestamp);
         vm.stopPrank();
-        assertEq(filled, 500e6, "swaps work again after unpause");
+        assertEq(filled, 500e18, "swaps work again after unpause");
     }
 }

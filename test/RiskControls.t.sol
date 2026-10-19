@@ -108,7 +108,7 @@ contract RiskControlsTest is Test {
         // Alice queues USDT -> USDC (no USDC liquidity, so the whole order queues, escrowing USDT).
         vm.startPrank(alice);
         usdt.approve(address(store), 1_000e6);
-        store.swap(address(usdt), address(usdc), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdt), address(usdc), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
 
         // USDT depegs and deposits are paused. processQueue must not push the escrowed USDT into
@@ -192,7 +192,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceOutOfBounds.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -203,7 +203,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.InvalidPrice.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -212,7 +212,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.StaleRound.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -222,7 +222,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceStale.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -438,7 +438,7 @@ contract RiskControlsTest is Test {
         // Alice queues USDC->USDT (no reserves): escrows 1000 USDC into the store.
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        store.swap(address(usdc), address(usdt), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
 
         usdc.burn(address(store), 400e6); // balance 600 < escrow 1000

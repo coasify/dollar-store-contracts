@@ -69,7 +69,7 @@ contract HubSwapQueueTest is Test {
     {
         vm.startPrank(who);
         offer.approve(address(store), amt);
-        (filled, queued) = store.swap(address(offer), address(want), amt, minOut, 0, block.timestamp);
+        (, filled, queued,) = store.swapOrQueue(address(offer), address(want), amt, minOut, block.timestamp);
         vm.stopPrank();
     }
 
@@ -200,7 +200,7 @@ contract HubSwapQueueTest is Test {
             usdc.mint(u, 500e6);
             vm.startPrank(u);
             usdc.approve(address(store), 500e6);
-            store.swap(address(usdc), address(usdt), 500e6, 0, 0, block.timestamp);
+            store.swapOrQueue(address(usdc), address(usdt), 500e6, 0, block.timestamp);
             vm.stopPrank();
         }
         assertEq(store.getQueueDepth(address(usdc), address(usdt)), 9 * 500e6, "9 positions queued");
@@ -229,7 +229,7 @@ contract HubSwapQueueTest is Test {
 
         vm.startPrank(carol);
         usdc.approve(address(store), 500e6);
-        uint256 out = store.swapExactInput(address(usdc), address(usdt), 500e6, 0, block.timestamp);
+        (, uint256 out) = store.swapExactInput(address(usdc), address(usdt), 500e6, 0, carol, block.timestamp);
         vm.stopPrank();
 
         assertEq(out, 500e6, "swapExactInput fills fully from reserves behind the dust head");
@@ -267,7 +267,7 @@ contract HubSwapQueueTest is Test {
         usdt.approve(address(store), 1_000e6);
         vm.expectEmit(true, true, false, true, address(store));
         emit QueueFilled(aliceId, alice, 1_000e6, 0);
-        store.swap(address(usdt), address(usdc), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdt), address(usdc), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -290,7 +290,7 @@ contract HubSwapQueueTest is Test {
         _deposit(bob, usdt, 1_000e6);
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        uint256 out = store.swapExactInput(address(usdc), address(usdt), 1_000e6, 0, block.timestamp);
+        (, uint256 out) = store.swapExactInput(address(usdc), address(usdt), 1_000e6, 0, alice, block.timestamp);
         vm.stopPrank();
         assertEq(out, 1_000e6, "full output");
         assertEq(usdt.balanceOf(alice), 1_000_000e6 + 1_000e6, "received");
@@ -301,27 +301,21 @@ contract HubSwapQueueTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(500e6), uint256(1_000e6))
+            abi.encodeWithSelector(
+                IDollarStore.InsufficientLiquidity.selector, address(usdt), uint256(500e6), uint256(1_000e6)
+            )
         );
-        store.swapExactInput(address(usdc), address(usdt), 1_000e6, 0, block.timestamp);
+        store.swapExactInput(address(usdc), address(usdt), 1_000e6, 0, alice, block.timestamp);
         vm.stopPrank();
     }
 
     // ============ Reverts ============
 
-    function test_swap_revertsTipNotZero() public {
-        vm.startPrank(alice);
-        usdc.approve(address(store), 1_000e6);
-        vm.expectRevert(IDollarStore.TipNotEnabled.selector);
-        store.swap(address(usdc), address(usdt), 1_000e6, 0, 1, block.timestamp);
-        vm.stopPrank();
-    }
-
     function test_swap_revertsSameAsset() public {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(IDollarStore.SameAsset.selector);
-        store.swap(address(usdc), address(usdc), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdc), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -329,8 +323,10 @@ contract HubSwapQueueTest is Test {
         _deposit(bob, usdt, 400e6);
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.MinAmountNotMet.selector, uint256(400e6), uint256(800e6)));
-        store.swap(address(usdc), address(usdt), 1_000e6, 800e6, 0, block.timestamp);
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.MinAmountNotMet.selector, address(usdt), uint256(400e6), uint256(800e6))
+        );
+        store.swapOrQueue(address(usdc), address(usdt), 1_000e6, 800e6, block.timestamp);
         vm.stopPrank();
     }
 
@@ -373,7 +369,7 @@ contract HubSwapQueueTest is Test {
         vm.startPrank(bob);
         usdc.approve(address(store), 300e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.OrderTooSmall.selector, uint256(300e6), uint256(500e6)));
-        store.swap(address(usdc), address(usdt), 300e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 300e6, 0, block.timestamp);
         vm.stopPrank();
     }
 

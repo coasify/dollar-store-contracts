@@ -178,7 +178,7 @@ contract LaunchCapsTest is Test {
         // bob swaps USDT->USDC: fills from USDC reserves, mints no DLRS -> exposure unchanged.
         vm.startPrank(bob);
         usdt.approve(address(store), 500e6);
-        (uint256 filled,) = store.swap(address(usdt), address(usdc), 500e6, 0, 0, block.timestamp);
+        (, uint256 filled,,) = store.swapOrQueue(address(usdt), address(usdc), 500e6, 0, block.timestamp);
         vm.stopPrank();
 
         assertEq(filled, 500e6, "swap fills despite cap");

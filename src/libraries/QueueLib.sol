@@ -46,7 +46,6 @@ library QueueLib {
         p.offerAsset = offerAsset;
         p.wantAsset = wantAsset;
         p.offerAmount = amount;
-        p.tip = 0; // reserved; enabling tips would be a later upgrade
         p.timestamp = block.timestamp;
         p.prev = q.tail;
         p.next = 0;

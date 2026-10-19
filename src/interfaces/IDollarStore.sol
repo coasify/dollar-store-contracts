@@ -247,6 +247,7 @@ interface IDollarStore {
         address indexed user, uint16 indexed poolId, address indexed asset, uint256 nativeAmount, uint256 units
     );
     /// @notice Emitted once per hub asset paid on a withdrawal (hub exits pay every hub asset held).
+    ///         `units` is normalized 6dp; `nativeAmount` is the transfer in the asset's own decimals.
     event Withdraw(
         address indexed user, uint16 indexed poolId, address indexed asset, uint256 units, uint256 nativeAmount
     );
@@ -259,7 +260,8 @@ interface IDollarStore {
     error AssetNotListed(address asset);
     /// @notice The asset does not belong to the given pool.
     error WrongPool(address asset, uint16 poolId);
-    /// @notice The pool's reserves are insufficient for the requested amount.
+    /// @notice The pool's reserves are insufficient for the requested amount. Both amounts are normalized
+    ///         6dp; on an exit they are hub dollar totals, and `asset` only names the pool being exited.
     error InsufficientReserves(address asset, uint256 requested, uint256 available);
     /// @notice The asset delivered less than expected (fee-on-transfer / non-standard); unsupported.
     error FeeOnTransferNotSupported(address asset);
@@ -277,7 +279,7 @@ interface IDollarStore {
     /// @notice Proportional exit. Hub (poolId 0): burn `units` DLRS and receive your slice of every hub
     ///         asset. Spoke (poolId >= 1): burn `units` receipt shares and receive your slice of the spoke
     ///         asset and of the spoke's claim on hub dollars. The caller never chooses an asset: to end up
-    ///         100% in one asset, withdraw and then `swap`, which respects the queue.
+    ///         100% in one asset, withdraw and then `swapOrQueue`, which respects the queue.
     ///         Exits are not pausable and are senior to minDlrsReserve: a spoke exit may take the claim
     ///         below the floor, and a fresh deposit followed by an exit returns the pool's mix, so it can
     ///         still move part of a deposit into hub assets without queueing. Pool assets of which the
@@ -296,19 +298,25 @@ interface IDollarStore {
 
     // ============ Directed Swaps & Queues ============
 
-    /// @notice Emitted on a swap. Amounts are normalized 6dp units.
+    /// @notice Emitted on a swap, in native units. `caller` paid; `recipient` received `amountOut`
+    ///         (the caller for swapOrQueue). `amountIn` is offerAsset pulled, `amountOut` wantAsset
+    ///         delivered now, `amountInQueued` the part of `amountIn` escrowed in the queue. Later queue
+    ///         payouts are reported by QueueFilled, in normalized 6dp units.
     event Swap(
-        address indexed user,
+        address indexed caller,
         address indexed offerAsset,
         address indexed wantAsset,
+        address recipient,
         uint256 amountIn,
-        uint256 amountFilled,
-        uint256 amountQueued
+        uint256 amountOut,
+        uint256 amountInQueued
     );
     /// @notice Emitted by swapSpokeToSpoke once per entry in `via` that carried part of the swap, with the
     ///         normalized amount routed through that hub asset. The whole call also emits one Swap.
     event SpokeSwapRouted(address indexed user, address indexed via, uint256 amount);
-    /// @notice Emitted when a new queue position is created. `poolId` is the pool whose lines it joins.
+    /// @notice Emitted when a new queue position is created. `amount` is the escrow in normalized 6dp
+    ///         units (swapOrQueue returns the same escrow in native offerAsset). `poolId` is the pool whose
+    ///         lines it joins.
     event QueueJoined(
         uint256 indexed positionId,
         address indexed owner,
@@ -317,29 +325,36 @@ interface IDollarStore {
         uint256 amount,
         uint16 poolId
     );
-    /// @notice Emitted when a queued position is filled (partially or fully).
+    /// @notice Emitted when a queued position is filled (partially or fully). `filled` and `remaining`
+    ///         are normalized 6dp units.
     event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
-    /// @notice Emitted when a queue position is cancelled and its escrow returned.
+    /// @notice Emitted when a queue position is cancelled and its escrow returned. `amountReturned` is
+    ///         normalized 6dp units; the transfer is in native offerAsset.
     event QueueCancelled(uint256 indexed positionId, address indexed owner, uint256 amountReturned);
     /// @notice Emitted when a position is parked: a transfer to its owner failed, so it is lifted out of
     ///         its directed queue and held on the parked line for its offer asset. Escrow is untouched;
-    ///         the owner exits by cancelQueue once the transfer can succeed.
+    ///         the owner exits by cancelQueue once the transfer can succeed. `units` is the escrow in
+    ///         normalized 6dp.
     event QueueParked(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
 
     /// @notice offerAsset == wantAsset is not a valid swap.
     error SameAsset();
-    /// @notice The (offerAsset, wantAsset) route is not supported, e.g. spoke to spoke through swap().
+    /// @notice The (offerAsset, wantAsset) route is not supported, e.g. spoke to spoke through swapOrQueue().
     error InvalidRoute(address offerAsset, address wantAsset);
-    /// @notice A non-zero tip was supplied; priority tips would be a later upgrade.
-    error TipNotEnabled();
     /// @notice The directed queue is at capacity (MAX_QUEUE_POSITIONS).
     error QueueFull(address offerAsset, address wantAsset);
-    /// @notice The queued remainder is below the minimum order size.
-    error OrderTooSmall(uint256 provided, uint256 minimum);
-    /// @notice The instantly-filled amount is below the caller's `minAmountOut`.
-    error MinAmountNotMet(uint256 filled, uint256 required);
-    /// @notice swapExactInput could not fill the full amount instantly.
-    error InsufficientLiquidity(uint256 filled, uint256 requested);
+    /// @notice The queued remainder is below the minimum order size (both normalized 6dp).
+    error OrderTooSmall(uint256 providedUnits, uint256 minimumUnits);
+    /// @notice The amount delivered now is below the caller's `minAmountOut` (both native `wantAsset`).
+    error MinAmountNotMet(address wantAsset, uint256 amountOut, uint256 minAmountOut);
+    /// @notice An all-or-nothing swap could not fill in full. Both amounts are native `wantAsset`.
+    ///         `fillableAmountOut` is the amount accounted as filled by this attempted execution before
+    ///         the revert; all effects were reverted. It is not a maximum-liquidity quote or a guarantee
+    ///         for a smaller retry; simulate the intended call. `requestedAmountOut` is the full output,
+    ///         floor(amount / So) * Sw.
+    error InsufficientLiquidity(address wantAsset, uint256 fillableAmountOut, uint256 requestedAmountOut);
+    /// @notice A swap recipient is the zero address or DollarStore itself.
+    error InvalidRecipient(address recipient);
     /// @notice No queue position exists with this id.
     error QueuePositionNotFound(uint256 positionId);
     /// @notice The caller does not own this queue position.
@@ -347,34 +362,42 @@ interface IDollarStore {
     /// @notice Cancelling a parked position: the escrow transfer to its owner failed.
     error EscrowTransferFailed(uint256 positionId);
 
-    /// @notice Swap `offerAsset` for `wantAsset` (1:1 in normalized units). Fills from the
-    ///         exact-opposite queue then protocol reserves; queues any remainder.
-    /// @param minAmountOut Minimum amount that must be filled instantly before queueing; set equal
-    ///        to the normalized `amount` to require a full instant fill (else it reverts).
-    /// @param tip Reserved for priority tips; must be 0.
-    /// @return amountFilled Instantly filled amount (normalized 6dp).
-    /// @return amountQueued Amount escrowed into the queue (normalized 6dp).
-    function swap(
-        address offerAsset,
-        address wantAsset,
-        uint256 amount,
-        uint256 minAmountOut,
-        uint256 tip,
-        uint256 deadline
-    ) external returns (uint256 amountFilled, uint256 amountQueued);
+    /// @notice Swap `offerAsset` for `wantAsset` 1:1, filling what it can now and queueing the rest
+    ///         under the caller. Fills from the exact-opposite queue, then protocol reserves (only
+    ///         behind any same-direction queue). The caller owns the queued position: it receives the
+    ///         later payouts and is the only one who can cancel it. Routers and solvers should use
+    ///         swapExactInput, which never queues. All amounts are native; with S = 10**(decimals - 6),
+    ///         `amount` is rounded down to a whole multiple of So and only that much is pulled, so any
+    ///         remainder below So stays with the caller.
+    /// @param amount Native offerAsset budget.
+    /// @param minAmountOut Minimum native wantAsset delivered now; a full instant fill is
+    ///        floor(amount / So) * Sw. Reverts MinAmountNotMet below it.
+    /// @return amountIn Native offerAsset pulled, floor(amount / So) * So, including the part queued.
+    /// @return amountOut Native wantAsset delivered now.
+    /// @return amountInQueued Native offerAsset escrowed in the queue, part of `amountIn`.
+    /// @return positionId The new queue position, 0 if nothing was queued.
+    function swapOrQueue(address offerAsset, address wantAsset, uint256 amount, uint256 minAmountOut, uint256 deadline)
+        external
+        returns (uint256 amountIn, uint256 amountOut, uint256 amountInQueued, uint256 positionId);
 
-    /// @notice All-or-nothing swap for routers/solvers: fills fully from opposite queue + reserves
-    ///         or reverts. Never queues.
-    /// @param minAmountOut Floor on the filled amount, in normalized 6-decimal units (same
-    ///        convention as swap). Reverts MinAmountNotMet(filled, minAmountOut) if not met.
-    /// @return amountOut Amount of wantAsset delivered (native units of wantAsset).
+    /// @notice All-or-nothing swap for routers and solvers: fills fully from the opposite queue and
+    ///         reserves or reverts InsufficientLiquidity. Never queues. All amounts are native; with
+    ///         S = 10**(decimals - 6), `amount` is rounded down to a whole multiple of So and only that
+    ///         much is pulled from the caller, so any remainder below So stays with the caller.
+    /// @param amount Native offerAsset budget. The full output is floor(amount / So) * Sw.
+    /// @param minAmountOut Minimum native wantAsset delivered. Reverts MinAmountNotMet below it.
+    /// @param recipient Receives the output. Pass the caller's own address to receive it yourself;
+    ///        reverts InvalidRecipient for the zero address or DollarStore.
+    /// @return amountIn Native offerAsset pulled from the caller.
+    /// @return amountOut Native wantAsset delivered to `recipient`.
     function swapExactInput(
         address offerAsset,
         address wantAsset,
         uint256 amount,
         uint256 minAmountOut,
+        address recipient,
         uint256 deadline
-    ) external returns (uint256 amountOut);
+    ) external returns (uint256 amountIn, uint256 amountOut);
 
     /// @notice All-or-nothing swap between two spoke assets through the hub assets in `via`, tried in
     ///         order. For each, a spoke->hub leg fills, like swapExactInput (opposite queue, then reserves
@@ -392,16 +415,21 @@ interface IDollarStore {
     ///         reserve cannot cover the rest). Parking alone does not revert. Never queues. `offerAsset`
     ///         is inflow-checked, and a `via` that fails the inflow check is skipped. To quote a single
     ///         hub asset, chain getSwapQuote(via, wantAsset, getSwapQuote(offerAsset, via, amount)): if
-    ///         that equals `amount` in normalized units, the swap fills unless a payout to a queued owner
-    ///         fails. Simulate the call for a list.
-    /// @return amountOut Amount of wantAsset delivered (native units of wantAsset).
+    ///         that equals floor(amount / So) * Sw, there is enough liquidity; the swap still needs every
+    ///         transfer to succeed, including payouts to queued owners and the final one to `recipient`.
+    ///         Simulate the actual call, and always for a list. Amounts are native and rounded as in swapExactInput.
+    /// @param recipient Receives the output. Pass the caller's own address to receive it yourself;
+    ///        reverts InvalidRecipient for the zero address or DollarStore.
+    /// @return amountIn Native offerAsset pulled from the caller.
+    /// @return amountOut Native wantAsset delivered to `recipient`.
     function swapSpokeToSpoke(
         address offerAsset,
         address wantAsset,
         address[] calldata via,
         uint256 amount,
+        address recipient,
         uint256 deadline
-    ) external returns (uint256 amountOut);
+    ) external returns (uint256 amountIn, uint256 amountOut);
 
     /// @notice Cancel a queue position and return the escrowed offer asset. If the transfer fails, a
     ///         queued position is parked (see QueueParked) and a parked position reverts
@@ -422,7 +450,8 @@ interface IDollarStore {
     ///         removed pool are never reported. `wantAsset == address(0)` returns the parked escrow of
     ///         `offerAsset`, listed or not.
     function getQueueDepth(address offerAsset, address wantAsset) external view returns (uint256);
-    /// @notice Details of a queue position (zeros if it does not exist). `poolId` is the pool it was
+    /// @notice Details of a queue position (zeros if it does not exist). `amount` is the remaining
+    ///         escrow in normalized 6dp units, not native offerAsset. `poolId` is the pool it was
     ///         queued in: the spoke pool for a hub<->spoke pair, 0 for hub-to-hub. It does not change
     ///         when the position is parked or the pool is removed.
     function getQueuePosition(uint256 positionId)
@@ -436,14 +465,18 @@ interface IDollarStore {
     function isQueuePositionParked(uint256 positionId) external view returns (bool);
     /// @notice Current minimum order size to queue into the (offerAsset -> wantAsset) queue, in the pool
     ///         the pair currently routes through. The base minimum if either asset is not listed,
-    ///         which includes `wantAsset == address(0)`, the parked line.
+    ///         which includes `wantAsset == address(0)`, the parked line. Normalized 6dp units: the
+    ///         native minimum queued remainder is this times 10**(offerAsset decimals - 6).
     function getMinimumOrderSize(address offerAsset, address wantAsset) external view returns (uint256);
-    /// @notice Amount of wantAsset, in its native units, that swap or swapExactInput would fill now for
-    ///         `amount` of offerAsset: the opposite queue, then reserves left after the swap first settles
-    ///         up to 8 earlier same-direction positions at the caller's gas cost. 0 when the swap would
-    ///         revert on route, pause, or offer-price checks. Assumes every token transfer succeeds: a
-    ///         queued owner who cannot be paid can make the real fill higher or lower, and a caller who
-    ///         cannot receive wantAsset makes the swap revert. Simulate the call for an exact answer.
+    /// @notice Amount of wantAsset, in its native units, that swapOrQueue or swapExactInput would fill now
+    ///         for `amount` of offerAsset: the opposite queue, then reserves left after the swap first
+    ///         settles up to 8 earlier same-direction positions at the caller's gas cost. 0 when the swap
+    ///         would revert on route, pause, or offer-price checks. A quote is liquidity only: it takes no
+    ///         caller or recipient and checks no transfer permission. It assumes every transfer succeeds:
+    ///         a queued owner who cannot be paid can make the real fill higher or lower, and the swap
+    ///         reverts if the address receiving wantAsset (the caller for swapOrQueue, `recipient`
+    ///         otherwise) cannot receive it. Simulate the actual call, with its caller and recipient,
+    ///         for an exact answer.
     function getSwapQuote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256);
 
     // ============ Risk Controls ============
