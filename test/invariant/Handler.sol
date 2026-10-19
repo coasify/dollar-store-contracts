@@ -38,6 +38,8 @@ contract Handler is Test {
     uint256 public relists; // successful createSpoke calls after a removal
     uint256 public s2sFills; // successful swapSpokeToSpoke calls
     uint256 public s2sSplits; // of which routed through more than one hub asset
+    uint256 public returnChecks; // successful calls whose returns were checked
+    uint256 public returnViolations; // of which broke a return identity (asserted zero by an invariant)
 
     uint256 internal constant MAX_AMOUNT = 1_000_000e6; // hub assets (6dp)
     uint256 internal constant MAX_AMOUNT_18 = 1_000_000e18; // spoke asset (18dp)
@@ -96,154 +98,195 @@ contract Handler is Test {
         if (positionId != 0) positionIds.push(positionId);
     }
 
+    function _scale(MockERC20 t) internal view returns (uint256) {
+        return 10 ** (t.decimals() - 6);
+    }
+
+    /// @dev Records a violation instead of asserting: reverts in a handler are swallowed. Every swap:
+    ///      amountIn is the budget rounded down to whole units; amountIn = filled + queued, with the
+    ///      filled part read from amountOut; a position id exactly when something queued.
+    function _checkSwap(
+        MockERC20 offer,
+        MockERC20 want,
+        uint256 amount,
+        uint256 amountIn,
+        uint256 amountOut,
+        uint256 queued,
+        uint256 id
+    ) internal {
+        uint256 so = _scale(offer);
+        uint256 sw = _scale(want);
+        returnChecks += 1;
+        if (
+            amountIn != (amount / so) * so || amountOut % sw != 0 || amountIn != (amountOut / sw) * so + queued
+                || (id != 0) != (queued > 0)
+        ) returnViolations += 1;
+    }
+
+    /// @dev Every deposit: amountIn is the budget rounded down, and the receiver's DLRS (hub) or shares
+    ///      (spoke) grew by exactly receiptAmount.
+    function _checkDeposit(MockERC20 t, uint256 amount, uint256 amountIn, uint256 receipt, uint256 grew) internal {
+        uint256 s = _scale(t);
+        returnChecks += 1;
+        if (amountIn != (amount / s) * s || grew != receipt) returnViolations += 1;
+    }
+
+    /// @dev Exit `amount` from `poolId` as `actor`, checking the return against a preview taken just
+    ///      before and against what arrived. Every check only counts, never reverts: a revert here would
+    ///      be swallowed with the call (fail_on_revert = false). Once the preview succeeds the exit must
+    ///      too: the amount is within the actor's balance, exits are not pausable, and no mock blocks.
+    function _exit(address actor, uint16 poolId, uint256 amount) internal {
+        try store.previewWithdraw(poolId, amount) returns (address[] memory assets, uint256[] memory quoted) {
+            uint256[] memory before = new uint256[](assets.length);
+            for (uint256 i; i < assets.length; ++i) {
+                before[i] = MockERC20(assets[i]).balanceOf(actor);
+            }
+            vm.prank(actor);
+            try store.withdraw(poolId, amount, new uint256[](0), type(uint256).max) returns (
+                address[] memory paidAssets, uint256[] memory paid
+            ) {
+                returnChecks += 1;
+                if (
+                    quoted.length != assets.length || paidAssets.length != assets.length || paid.length != assets.length
+                ) {
+                    returnViolations += 1;
+                    return;
+                }
+                for (uint256 i; i < assets.length; ++i) {
+                    uint256 nowBal = MockERC20(assets[i]).balanceOf(actor);
+                    if (
+                        paidAssets[i] != assets[i] || paid[i] != quoted[i] || nowBal < before[i]
+                            || nowBal - before[i] != paid[i]
+                    ) returnViolations += 1;
+                }
+            } catch {
+                returnViolations += 1; // the preview succeeded, so the exit must have
+            }
+        } catch {
+            vm.prank(actor);
+            try store.withdraw(poolId, amount, new uint256[](0), type(uint256).max) {
+                returnViolations += 1; // the exit paid where its preview reverted
+            } catch {}
+        }
+    }
+
+    function _depositFor(address actor, address receiver, uint16 poolId, MockERC20 t, uint256 amount) internal {
+        t.mint(actor, amount);
+        vm.prank(actor);
+        t.approve(address(store), amount);
+        uint256 before = poolId == 0 ? dlrs.balanceOf(receiver) : store.getReceiptShares(poolId, receiver);
+        vm.prank(actor);
+        try store.deposit(poolId, address(t), amount, receiver, type(uint256).max) returns (
+            uint256 amountIn, uint256 receipt
+        ) {
+            uint256 afterwards = poolId == 0 ? dlrs.balanceOf(receiver) : store.getReceiptShares(poolId, receiver);
+            if (afterwards < before) returnViolations += 1;
+            else _checkDeposit(t, amount, amountIn, receipt, afterwards - before);
+        } catch {}
+    }
+
+    function _swapOrQueue(address actor, MockERC20 offer, MockERC20 want, uint256 amount) internal {
+        offer.mint(actor, amount);
+        vm.prank(actor);
+        offer.approve(address(store), amount);
+        vm.prank(actor);
+        try store.swapOrQueue(address(offer), address(want), amount, 0, type(uint256).max) returns (
+            uint256 amountIn, uint256 amountOut, uint256 queued, uint256 positionId
+        ) {
+            _trackQueued(positionId);
+            _checkSwap(offer, want, amount, amountIn, amountOut, queued, positionId);
+        } catch {}
+    }
+
     // ============ Hub actions ============
 
-    function deposit(uint256 actorSeed, bool useUsdc, uint256 amount) external {
-        address actor = _actor(actorSeed);
-        MockERC20 t = useUsdc ? usdc : usdt;
-        amount = bound(amount, 0, MAX_AMOUNT);
-        t.mint(actor, amount);
-        vm.startPrank(actor);
-        t.approve(address(store), amount);
-        try store.deposit(0, address(t), amount, actor, type(uint256).max) {} catch {}
-        vm.stopPrank();
+    /// @dev The receiver is any actor, often not the payer.
+    function deposit(uint256 actorSeed, uint256 receiverSeed, bool useUsdc, uint256 amount) external {
+        _depositFor(_actor(actorSeed), _actor(receiverSeed), 0, useUsdc ? usdc : usdt, bound(amount, 0, MAX_AMOUNT));
     }
 
     function withdraw(uint256 actorSeed, uint256 units) external {
         address actor = _actor(actorSeed);
-        units = bound(units, 0, dlrs.balanceOf(actor));
-        vm.startPrank(actor);
-        try store.withdraw(0, units, new uint256[](0), type(uint256).max) {} catch {}
-        vm.stopPrank();
+        _exit(actor, 0, bound(units, 0, dlrs.balanceOf(actor)));
     }
 
     function swap(uint256 actorSeed, bool offerUsdc, uint256 amount) external {
+        (MockERC20 offer, MockERC20 want) = _pair(offerUsdc);
+        _swapOrQueue(_actor(actorSeed), offer, want, bound(amount, 0, MAX_AMOUNT));
+    }
+
+    /// @dev All-or-nothing hub swap to any actor as recipient, who may own positions it fills.
+    function swapExact(uint256 actorSeed, uint256 recipientSeed, bool offerUsdc, uint256 amount) external {
         address actor = _actor(actorSeed);
         (MockERC20 offer, MockERC20 want) = _pair(offerUsdc);
         amount = bound(amount, 0, MAX_AMOUNT);
         offer.mint(actor, amount);
-        vm.startPrank(actor);
+        vm.prank(actor);
         offer.approve(address(store), amount);
-        try store.swapOrQueue(address(offer), address(want), amount, 0, type(uint256).max) returns (
-            uint256, uint256, uint256, uint256 positionId
+        vm.prank(actor);
+        try store.swapExactInput(
+            address(offer), address(want), amount, 0, _actor(recipientSeed), type(uint256).max
+        ) returns (
+            uint256 amountIn, uint256 amountOut
         ) {
-            _trackQueued(positionId);
+            _checkSwap(offer, want, amount, amountIn, amountOut, 0, 0);
         } catch {}
-        vm.stopPrank();
     }
 
     // ============ Spoke actions ============
 
-    function depositSpoke(uint256 actorSeed, uint256 amount) external {
-        address actor = _actor(actorSeed);
-        amount = bound(amount, 0, MAX_AMOUNT_18);
-        rlusd.mint(actor, amount);
-        vm.startPrank(actor);
-        rlusd.approve(address(store), amount);
-        try store.deposit(spokeId, address(rlusd), amount, actor, type(uint256).max) {} catch {}
-        vm.stopPrank();
+    function depositSpoke(uint256 actorSeed, uint256 receiverSeed, uint256 amount) external {
+        _depositFor(_actor(actorSeed), _actor(receiverSeed), spokeId, rlusd, bound(amount, 0, MAX_AMOUNT_18));
     }
 
-    function fundSpoke(uint256 actorSeed, bool useUsdc, uint256 amount) external {
-        address actor = _actor(actorSeed);
-        MockERC20 t = useUsdc ? usdc : usdt;
-        amount = bound(amount, 0, MAX_AMOUNT);
-        t.mint(actor, amount);
-        vm.startPrank(actor);
-        t.approve(address(store), amount);
-        try store.deposit(spokeId, address(t), amount, actor, type(uint256).max) {} catch {}
-        vm.stopPrank();
+    function fundSpoke(uint256 actorSeed, uint256 receiverSeed, bool useUsdc, uint256 amount) external {
+        _depositFor(
+            _actor(actorSeed), _actor(receiverSeed), spokeId, useUsdc ? usdc : usdt, bound(amount, 0, MAX_AMOUNT)
+        );
     }
 
     function withdrawSpoke(uint256 actorSeed, uint256 shares) external {
         address actor = _actor(actorSeed);
-        shares = bound(shares, 0, store.getReceiptShares(spokeId, actor));
-        vm.startPrank(actor);
-        try store.withdraw(spokeId, shares, new uint256[](0), type(uint256).max) {} catch {}
-        vm.stopPrank();
+        _exit(actor, spokeId, bound(shares, 0, store.getReceiptShares(spokeId, actor)));
     }
 
     function swapHubToSpoke(uint256 actorSeed, bool useUsdc, uint256 amount) external {
-        address actor = _actor(actorSeed);
-        MockERC20 offer = useUsdc ? usdc : usdt;
-        amount = bound(amount, 0, MAX_AMOUNT);
-        offer.mint(actor, amount);
-        vm.startPrank(actor);
-        offer.approve(address(store), amount);
-        try store.swapOrQueue(address(offer), address(rlusd), amount, 0, type(uint256).max) returns (
-            uint256, uint256, uint256, uint256 positionId
-        ) {
-            _trackQueued(positionId);
-        } catch {}
-        vm.stopPrank();
+        _swapOrQueue(_actor(actorSeed), useUsdc ? usdc : usdt, rlusd, bound(amount, 0, MAX_AMOUNT));
     }
 
     function swapSpokeToHub(uint256 actorSeed, bool useUsdc, uint256 amount) external {
-        address actor = _actor(actorSeed);
-        MockERC20 want = useUsdc ? usdc : usdt;
-        amount = bound(amount, 0, MAX_AMOUNT_18);
-        rlusd.mint(actor, amount);
-        vm.startPrank(actor);
-        rlusd.approve(address(store), amount);
-        try store.swapOrQueue(address(rlusd), address(want), amount, 0, type(uint256).max) returns (
-            uint256, uint256, uint256, uint256 positionId
-        ) {
-            _trackQueued(positionId);
-        } catch {}
-        vm.stopPrank();
+        _swapOrQueue(_actor(actorSeed), rlusd, useUsdc ? usdc : usdt, bound(amount, 0, MAX_AMOUNT_18));
     }
 
     // ============ Spoke B and spoke-to-spoke ============
 
-    function depositSpokeB(uint256 actorSeed, uint256 amount) external {
-        address actor = _actor(actorSeed);
-        amount = bound(amount, 0, MAX_AMOUNT);
-        xusd.mint(actor, amount);
-        vm.startPrank(actor);
-        xusd.approve(address(store), amount);
-        try store.deposit(spokeB, address(xusd), amount, actor, type(uint256).max) {} catch {}
-        vm.stopPrank();
+    function depositSpokeB(uint256 actorSeed, uint256 receiverSeed, uint256 amount) external {
+        _depositFor(_actor(actorSeed), _actor(receiverSeed), spokeB, xusd, bound(amount, 0, MAX_AMOUNT));
     }
 
-    function fundSpokeB(uint256 actorSeed, bool useUsdc, uint256 amount) external {
-        address actor = _actor(actorSeed);
-        MockERC20 t = useUsdc ? usdc : usdt;
-        amount = bound(amount, 0, MAX_AMOUNT);
-        t.mint(actor, amount);
-        vm.startPrank(actor);
-        t.approve(address(store), amount);
-        try store.deposit(spokeB, address(t), amount, actor, type(uint256).max) {} catch {}
-        vm.stopPrank();
+    function fundSpokeB(uint256 actorSeed, uint256 receiverSeed, bool useUsdc, uint256 amount) external {
+        _depositFor(
+            _actor(actorSeed), _actor(receiverSeed), spokeB, useUsdc ? usdc : usdt, bound(amount, 0, MAX_AMOUNT)
+        );
     }
 
     function withdrawSpokeB(uint256 actorSeed, uint256 shares) external {
         address actor = _actor(actorSeed);
-        shares = bound(shares, 0, store.getReceiptShares(spokeB, actor));
-        vm.startPrank(actor);
-        try store.withdraw(spokeB, shares, new uint256[](0), type(uint256).max) {} catch {}
-        vm.stopPrank();
+        _exit(actor, spokeB, bound(shares, 0, store.getReceiptShares(spokeB, actor)));
     }
 
     /// @dev Hub <-> spoke B swaps, in either direction, so spoke-to-spoke legs meet queued positions.
     function swapHubSpokeB(uint256 actorSeed, bool useUsdc, bool toSpoke, uint256 amount) external {
-        address actor = _actor(actorSeed);
         MockERC20 hub = useUsdc ? usdc : usdt;
         (MockERC20 offer, MockERC20 want) = toSpoke ? (hub, xusd) : (xusd, hub);
-        amount = bound(amount, 0, MAX_AMOUNT);
-        offer.mint(actor, amount);
-        vm.startPrank(actor);
-        offer.approve(address(store), amount);
-        try store.swapOrQueue(address(offer), address(want), amount, 0, type(uint256).max) returns (
-            uint256, uint256, uint256, uint256 positionId
-        ) {
-            _trackQueued(positionId);
-        } catch {}
-        vm.stopPrank();
+        _swapOrQueue(_actor(actorSeed), offer, want, bound(amount, 0, MAX_AMOUNT));
     }
 
     /// @dev Spoke A <-> spoke B through one of six hub-asset lists: each single asset, both orders of
     ///      the split, and each asset repeated.
-    function swapSpokeToSpoke(uint256 actorSeed, bool aToB, uint256 viaSeed, uint256 amount) external {
+    function swapSpokeToSpoke(uint256 actorSeed, uint256 recipientSeed, bool aToB, uint256 viaSeed, uint256 amount)
+        external
+    {
         if (!store.isAssetListed(address(rlusd))) this.relistSpoke(); // keep a partner for spoke B
         address actor = _actor(actorSeed);
         (MockERC20 offer, MockERC20 want) = aToB ? (rlusd, xusd) : (xusd, rlusd);
@@ -266,7 +309,12 @@ contract Handler is Test {
         vm.startPrank(actor);
         offer.approve(address(store), amount);
         vm.recordLogs();
-        try store.swapSpokeToSpoke(address(offer), address(want), via, amount, actor, type(uint256).max) {
+        try store.swapSpokeToSpoke(
+            address(offer), address(want), via, amount, _actor(recipientSeed), type(uint256).max
+        ) returns (
+            uint256 amountIn, uint256 amountOut
+        ) {
+            _checkSwap(offer, want, amount, amountIn, amountOut, 0, 0);
             s2sFills += 1;
             if (_routedCount() > 1) s2sSplits += 1;
         } catch {}
@@ -297,8 +345,7 @@ contract Handler is Test {
         for (uint256 i; i < actors.length; ++i) {
             uint256 shares = store.getReceiptShares(spokeId, actors[i]);
             if (shares == 0) continue;
-            vm.prank(actors[i]);
-            try store.withdraw(spokeId, shares, new uint256[](0), type(uint256).max) {} catch {}
+            _exit(actors[i], spokeId, shares); // checked like every other exit
         }
         vm.prank(governor);
         try store.removePool(spokeId) {
