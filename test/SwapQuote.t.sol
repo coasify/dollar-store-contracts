@@ -63,7 +63,7 @@ contract SwapQuoteTest is Test {
     function _deposit(uint16 poolId, ERC20 token, uint256 amt) internal {
         vm.startPrank(alice);
         token.approve(address(store), amt);
-        store.deposit(poolId, address(token), amt, block.timestamp);
+        store.deposit(poolId, address(token), amt, alice, block.timestamp);
         vm.stopPrank();
     }
 

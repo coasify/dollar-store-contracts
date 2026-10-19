@@ -105,7 +105,7 @@ contract Handler is Test {
         t.mint(actor, amount);
         vm.startPrank(actor);
         t.approve(address(store), amount);
-        try store.deposit(0, address(t), amount, type(uint256).max) {} catch {}
+        try store.deposit(0, address(t), amount, actor, type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -140,7 +140,7 @@ contract Handler is Test {
         rlusd.mint(actor, amount);
         vm.startPrank(actor);
         rlusd.approve(address(store), amount);
-        try store.deposit(spokeId, address(rlusd), amount, type(uint256).max) {} catch {}
+        try store.deposit(spokeId, address(rlusd), amount, actor, type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -151,7 +151,7 @@ contract Handler is Test {
         t.mint(actor, amount);
         vm.startPrank(actor);
         t.approve(address(store), amount);
-        try store.deposit(spokeId, address(t), amount, type(uint256).max) {} catch {}
+        try store.deposit(spokeId, address(t), amount, actor, type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -201,7 +201,7 @@ contract Handler is Test {
         xusd.mint(actor, amount);
         vm.startPrank(actor);
         xusd.approve(address(store), amount);
-        try store.deposit(spokeB, address(xusd), amount, type(uint256).max) {} catch {}
+        try store.deposit(spokeB, address(xusd), amount, actor, type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 
@@ -212,7 +212,7 @@ contract Handler is Test {
         t.mint(actor, amount);
         vm.startPrank(actor);
         t.approve(address(store), amount);
-        try store.deposit(spokeB, address(t), amount, type(uint256).max) {} catch {}
+        try store.deposit(spokeB, address(t), amount, actor, type(uint256).max) {} catch {}
         vm.stopPrank();
     }
 

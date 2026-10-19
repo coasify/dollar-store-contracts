@@ -323,7 +323,7 @@ contract PauseRolesTest is Test {
         usdc.mint(alice, 200e6);
         vm.startPrank(alice);
         usdc.approve(address(store), 200e6);
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
 
         vm.prank(pauserA);
@@ -353,13 +353,13 @@ contract PauseRolesTest is Test {
         // With every pause lifted the same deposit goes through, so the pauses were what stopped it.
         _unpauseAll();
         vm.prank(alice);
-        store.deposit(0, address(usdc), 1e6, block.timestamp);
+        store.deposit(0, address(usdc), 1e6, alice, block.timestamp);
     }
 
     function _depositReverts(bytes memory reason) internal {
         vm.prank(alice);
         vm.expectRevert(reason);
-        store.deposit(0, address(usdc), 1e6, block.timestamp);
+        store.deposit(0, address(usdc), 1e6, alice, block.timestamp);
     }
 
     function _withdraws(uint256 units) internal {
@@ -433,7 +433,7 @@ contract PauseRolesTest is Test {
         usdt.mint(bob, 1_500e6);
         vm.startPrank(bob);
         usdt.approve(address(store), 1_500e6);
-        store.deposit(0, address(usdt), 1_500e6, block.timestamp);
+        store.deposit(0, address(usdt), 1_500e6, bob, block.timestamp);
         vm.stopPrank();
 
         vm.prank(pauserA);
@@ -485,7 +485,7 @@ contract PauseRolesTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.deposit(spoke, address(rlusd), 1e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1e18, alice, block.timestamp);
         vm.stopPrank();
     }
 

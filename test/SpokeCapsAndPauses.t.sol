@@ -54,14 +54,14 @@ contract SpokeCapsAndPausesTest is Test {
     function _depositSpokeAsset(address who, uint256 nativeAmt) internal {
         vm.startPrank(who);
         rlusd.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(rlusd), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(rlusd), nativeAmt, who, block.timestamp);
         vm.stopPrank();
     }
 
     function _fund(address who, uint256 nativeAmt) internal {
         vm.startPrank(who);
         usdc.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(usdc), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(usdc), nativeAmt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -78,7 +78,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, spoke, uint256(1_100e6), uint256(1_000e6))
         );
-        store.deposit(spoke, address(rlusd), 500e18, block.timestamp); // 600 + 500 > 1000
+        store.deposit(spoke, address(rlusd), 500e18, alice, block.timestamp); // 600 + 500 > 1000
         vm.stopPrank();
     }
 
@@ -94,7 +94,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, spoke, uint256(1_100e6), uint256(1_000e6))
         );
-        store.deposit(spoke, address(rlusd), 500e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 500e18, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -121,7 +121,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -131,7 +131,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 

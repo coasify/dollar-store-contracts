@@ -71,12 +71,12 @@ contract SpokeWithdrawTest is Test {
 
     function _depositSpokeAsset(address who, uint256 nativeAmt) internal returns (uint256 shares) {
         vm.prank(who);
-        shares = store.deposit(spoke, address(rlusd), nativeAmt, block.timestamp);
+        (, shares) = store.deposit(spoke, address(rlusd), nativeAmt, who, block.timestamp);
     }
 
     function _fund(address who, MockERC20 hub, uint256 nativeAmt) internal returns (uint256 shares) {
         vm.prank(who);
-        shares = store.deposit(spoke, address(hub), nativeAmt, block.timestamp);
+        (, shares) = store.deposit(spoke, address(hub), nativeAmt, who, block.timestamp);
     }
 
     // ============ One-sided pools: the slice is whatever the pool holds ============
@@ -167,7 +167,7 @@ contract SpokeWithdrawTest is Test {
         uint256 rlBefore = rlusd.balanceOf(alice);
         uint256 usdcBefore = usdc.balanceOf(alice);
         vm.startPrank(alice);
-        uint256 shares = store.deposit(spoke, address(rlusd), 900_000e18, block.timestamp);
+        (, uint256 shares) = store.deposit(spoke, address(rlusd), 900_000e18, alice, block.timestamp);
         (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(spoke, shares, block.timestamp);
         vm.stopPrank();
 
@@ -192,9 +192,9 @@ contract SpokeWithdrawTest is Test {
     function test_withdraw_dustPositions_canAlwaysExit() public {
         // Build the state: alice supplies 1 unit of RLUSD, bob funds 1 unit of USDC.
         vm.prank(alice);
-        store.deposit(spoke, address(rlusd), 1e12, block.timestamp); // 1 unit = 1e12 wei of 18dp
+        store.deposit(spoke, address(rlusd), 1e12, alice, block.timestamp); // 1 unit = 1e12 wei of 18dp
         vm.prank(bob);
-        store.deposit(spoke, address(usdc), 1, block.timestamp); // 1 unit
+        store.deposit(spoke, address(usdc), 1, bob, block.timestamp); // 1 unit
         assertEq(store.getReceiptTotalShares(spoke), 2);
         assertEq(store.getReserve(spoke, address(rlusd)), 1);
         assertEq(store.getDlrsReserve(spoke), 1);
@@ -215,9 +215,9 @@ contract SpokeWithdrawTest is Test {
     /// @notice The hub leg never exceeds the claim: rounding excess lands on the spoke side.
     function test_withdraw_roundingNeverOverpaysHubLeg() public {
         vm.prank(alice);
-        store.deposit(spoke, address(rlusd), 3e12, block.timestamp); // 3 units RLUSD, 3 shares
+        store.deposit(spoke, address(rlusd), 3e12, alice, block.timestamp); // 3 units RLUSD, 3 shares
         vm.prank(bob);
-        store.deposit(spoke, address(usdc), 1, block.timestamp); // claim 1, 4 shares, pool value 4
+        store.deposit(spoke, address(usdc), 1, bob, block.timestamp); // claim 1, 4 shares, pool value 4
         vm.prank(alice);
         (uint256 s1, uint256 h1) = store.withdraw(spoke, 3, block.timestamp); // value 3
         assertEq(s1 + h1, 3);

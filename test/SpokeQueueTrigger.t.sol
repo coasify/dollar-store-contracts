@@ -73,7 +73,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice deposits the spoke asset; the new reserve settles bob's waiting hub->spoke order.
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(rlusd.balanceOf(bob), 1_000_000e18 + 500e18, "bob got RLUSD from the deposit");
@@ -94,7 +94,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice funds the spoke with a hub asset; the new DLRS side settles bob's spoke->hub order.
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(bob), 1_000_000e6 + 500e6, "bob got USDC from the funding deposit");
@@ -115,7 +115,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice funds USDC -> settlement tries to pay bob USDC, which fails -> bob is parked.
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(bob), 1_000_000e6, "bob received no USDC (blocked)");
@@ -143,7 +143,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice deposits RLUSD -> settlement tries to pay bob RLUSD, which fails -> bob is parked.
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob received no RLUSD (blocked)");
@@ -170,7 +170,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice deposits the healthy spoke asset; the trigger must skip bob's USDC->RLUSD queue.
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled (offer paused)");
@@ -202,7 +202,7 @@ contract SpokeQueueTriggerTest is Test {
 
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "off-peg offer queue NOT settled");
@@ -223,7 +223,7 @@ contract SpokeQueueTriggerTest is Test {
     function _depositRlusdAndAssertSkipped() internal {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled: offer failed canInflow");
         assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob got no RLUSD");
@@ -342,7 +342,7 @@ contract SpokeQueueTriggerTest is Test {
 
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 0, "padding ignored: queue settled");
         assertEq(rlusd.balanceOf(bob), 1_000_000e18 + 500e18, "bob got his RLUSD");
@@ -356,7 +356,7 @@ contract SpokeQueueTriggerTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         uint256 before = gasleft();
-        store.deposit{gas: 3_000_000}(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit{gas: 3_000_000}(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         assertLt(before - gasleft(), 1_000_000, "a looping feed costs the caller at most its budget");
         vm.stopPrank();
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled: offer failed canInflow");
@@ -391,7 +391,7 @@ contract SpokeQueueTriggerTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1e6);
         bool healthy;
-        try store.deposit(0, address(usdc), 1e6, block.timestamp) {
+        try store.deposit(0, address(usdc), 1e6, alice, block.timestamp) {
             healthy = true;
         } catch {}
         vm.stopPrank();
@@ -399,7 +399,7 @@ contract SpokeQueueTriggerTest is Test {
 
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
         bool settled = store.getQueueDepth(address(usdc), address(rlusd)) == 0;
         assertEq(settled, healthy, "canInflow and checkPeg disagree");

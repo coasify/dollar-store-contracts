@@ -87,7 +87,7 @@ contract GovernorReentrancyTest is Test {
     function _deposit(address who, address token, uint256 amt) internal {
         vm.startPrank(who);
         MockERC20(token).approve(address(store), amt);
-        store.deposit(0, token, amt, block.timestamp);
+        store.deposit(0, token, amt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -197,7 +197,7 @@ contract GovernorReentrancyTest is Test {
         vm.startPrank(alice);
         tok.approve(address(store), 100e6);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        store.deposit(pool, address(tok), 100e6, block.timestamp);
+        store.deposit(pool, address(tok), 100e6, alice, block.timestamp);
         vm.stopPrank();
     }
 

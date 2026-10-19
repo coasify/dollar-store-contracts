@@ -78,7 +78,7 @@ contract SpokeToSpokeSwapTest is Test {
     function _deposit(uint16 poolId, address asset, uint256 nativeAmt) internal {
         vm.startPrank(alice);
         MockERC20(asset).approve(address(store), nativeAmt);
-        store.deposit(poolId, asset, nativeAmt, block.timestamp);
+        store.deposit(poolId, asset, nativeAmt, alice, block.timestamp);
         vm.stopPrank();
     }
 

@@ -159,8 +159,8 @@ contract CreateSpokeScriptTest is Test {
         vm.startPrank(anyone);
         spokeB.approve(address(store), 300_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, 1, 300_000e6, 250_000e6));
-        store.deposit(1, address(spokeB), 300_000e18, block.timestamp);
-        store.deposit(1, address(spokeB), 250_000e18, block.timestamp);
+        store.deposit(1, address(spokeB), 300_000e18, anyone, block.timestamp);
+        store.deposit(1, address(spokeB), 250_000e18, anyone, block.timestamp);
         vm.stopPrank();
     }
 

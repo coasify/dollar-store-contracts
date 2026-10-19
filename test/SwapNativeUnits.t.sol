@@ -64,7 +64,7 @@ contract SwapNativeUnitsTest is Test {
     function _deposit(MockERC20 token, uint256 amount) internal {
         vm.startPrank(bob);
         token.approve(address(store), amount);
-        store.deposit(0, address(token), amount, block.timestamp);
+        store.deposit(0, address(token), amount, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -368,7 +368,7 @@ contract SwapNativeUnitsTest is Test {
         MockBlacklistERC20 frz = _frozenToken();
         vm.startPrank(bob);
         frz.approve(address(store), 1_000e18);
-        store.deposit(0, address(frz), 1_000e18, block.timestamp);
+        store.deposit(0, address(frz), 1_000e18, bob, block.timestamp);
         vm.stopPrank();
         frz.setBlocked(alice, true);
         _approve(alice, usdc, 1_000e6);
@@ -499,7 +499,7 @@ contract SwapNativeUnitsTest is Test {
 
         vm.startPrank(bob);
         w.approve(address(store), 2e9 * sw);
-        store.deposit(0, address(w), 2e9 * sw, block.timestamp);
+        store.deposit(0, address(w), 2e9 * sw, bob, block.timestamp);
         vm.stopPrank();
 
         assertEq(store.getSwapQuote(address(o), address(w), amount), units * sw, "quote");
@@ -545,7 +545,7 @@ contract SwapNativeUnitsTest is Test {
         if (r > 0) {
             vm.startPrank(bob);
             w.approve(address(store), r * sw);
-            store.deposit(0, address(w), r * sw, block.timestamp);
+            store.deposit(0, address(w), r * sw, bob, block.timestamp);
             vm.stopPrank();
         }
         uint256 oBefore = o.balanceOf(alice);
@@ -605,9 +605,9 @@ contract SwapNativeUnitsTest is Test {
 
         vm.startPrank(bob);
         h.approve(address(store), u * sh);
-        store.deposit(poolO, address(h), u * sh, block.timestamp); // offered spoke's hub claim
+        store.deposit(poolO, address(h), u * sh, bob, block.timestamp); // offered spoke's hub claim
         w.approve(address(store), (u - 1) * sw);
-        store.deposit(poolW, address(w), (u - 1) * sw, block.timestamp); // one unit short
+        store.deposit(poolW, address(w), (u - 1) * sw, bob, block.timestamp); // one unit short
         vm.stopPrank();
 
         vm.startPrank(alice);
@@ -620,7 +620,7 @@ contract SwapNativeUnitsTest is Test {
 
         vm.startPrank(bob);
         w.approve(address(store), sw);
-        store.deposit(poolW, address(w), sw, block.timestamp); // now exactly enough
+        store.deposit(poolW, address(w), sw, bob, block.timestamp); // now exactly enough
         vm.stopPrank();
 
         uint256 oBefore = o.balanceOf(alice);

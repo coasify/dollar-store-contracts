@@ -31,7 +31,12 @@ contract HubDepositWithdrawTest is Test {
     MockAggregatorV3 internal feed; // $1 mock oracle
 
     event Deposit(
-        address indexed user, uint16 indexed poolId, address indexed asset, uint256 nativeAmount, uint256 units
+        address indexed receiver,
+        uint16 indexed poolId,
+        address indexed asset,
+        address caller,
+        uint256 amountIn,
+        uint256 receiptAmount
     );
     event Withdraw(
         address indexed user, uint16 indexed poolId, address indexed asset, uint256 units, uint256 nativeAmount
@@ -62,7 +67,7 @@ contract HubDepositWithdrawTest is Test {
     function _deposit(address who, MockERC20 token, uint256 amount) internal returns (uint256 units) {
         vm.startPrank(who);
         token.approve(address(store), amount);
-        units = store.deposit(0, address(token), amount, block.timestamp);
+        (, units) = store.deposit(0, address(token), amount, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -78,8 +83,8 @@ contract HubDepositWithdrawTest is Test {
         usdc.approve(address(store), 1_000e6);
 
         vm.expectEmit(true, true, true, true, address(store));
-        emit Deposit(alice, 0, address(usdc), 1_000e6, 1_000e6);
-        uint256 units = store.deposit(0, address(usdc), 1_000e6, block.timestamp);
+        emit Deposit(alice, 0, address(usdc), alice, 1_000e6, 1_000e6);
+        (, uint256 units) = store.deposit(0, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(units, 1_000e6, "receiptUnits");
@@ -129,7 +134,7 @@ contract HubDepositWithdrawTest is Test {
         vm.startPrank(alice);
         dai.approve(address(store), 1e11); // below 1 unit at 18dp (< 1e12)
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.deposit(0, address(dai), 1e11, block.timestamp);
+        store.deposit(0, address(dai), 1e11, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -139,7 +144,7 @@ contract HubDepositWithdrawTest is Test {
         vm.startPrank(alice);
         other.approve(address(store), 1e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(other)));
-        store.deposit(0, address(other), 1e6, block.timestamp);
+        store.deposit(0, address(other), 1e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -152,7 +157,7 @@ contract HubDepositWithdrawTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(1)));
-        store.deposit(1, address(usdc), 1e6, block.timestamp);
+        store.deposit(1, address(usdc), 1e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -161,7 +166,7 @@ contract HubDepositWithdrawTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, uint256(999), uint256(1000)));
-        store.deposit(0, address(usdc), 1e6, 999);
+        store.deposit(0, address(usdc), 1e6, alice, 999);
         vm.stopPrank();
     }
 
@@ -171,7 +176,7 @@ contract HubDepositWithdrawTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1e6);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
-        store.deposit(0, address(usdc), 1e6, block.timestamp);
+        store.deposit(0, address(usdc), 1e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -184,7 +189,7 @@ contract HubDepositWithdrawTest is Test {
         vm.startPrank(alice);
         fee.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.FeeOnTransferNotSupported.selector, address(fee)));
-        store.deposit(0, address(fee), 1_000e6, block.timestamp);
+        store.deposit(0, address(fee), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 

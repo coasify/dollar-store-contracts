@@ -59,14 +59,14 @@ contract SpokeSwapTest is Test {
     function _seedSpokeAsset(uint256 nativeAmt) internal {
         vm.startPrank(alice);
         rlusd.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(rlusd), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(rlusd), nativeAmt, alice, block.timestamp);
         vm.stopPrank();
     }
 
     function _seedDlrsSide(uint256 nativeAmt) internal {
         vm.startPrank(alice);
         usdc.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(usdc), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(usdc), nativeAmt, alice, block.timestamp);
         vm.stopPrank();
     }
 

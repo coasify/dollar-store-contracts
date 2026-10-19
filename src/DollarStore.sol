@@ -501,18 +501,18 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Routes to the hub (poolId 0, mints DLRS 1:1) or a spoke (poolId >= 1). A spoke deposit is
     ///      either the spoke's own asset (enters the spoke reserve) or a hub asset that funds the
     ///      spoke's dlrsReserve; both mint pro-rata receipt shares. New exposure is gated by global
-    ///      pause + reentrancy guard. Pulls only `nativePulled` (= units * scalingFactor); sub-unit
-    ///      dust stays with the user. A before/after balance check rejects fee-on-transfer tokens.
-    /// @return receiptUnits For a HUB deposit, the DLRS minted (normalized 6dp). For a SPOKE deposit,
-    ///         the non-transferable receipt shares credited to the LP.
-    function deposit(uint16 poolId, address asset, uint256 amount, uint256 deadline)
+    ///      pause + reentrancy guard. Pulls only `amountIn` (= units * scalingFactor) from the caller;
+    ///      sub-unit dust stays with the caller. A before/after balance check rejects fee-on-transfer
+    ///      tokens. The DLRS or receipt shares are credited to `receiver`.
+    function deposit(uint16 poolId, address asset, uint256 amount, address receiver, uint256 deadline)
         external
         override
         nonReentrant
         whenNotPaused
-        returns (uint256 receiptUnits)
+        returns (uint256 amountIn, uint256 receiptAmount)
     {
         if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
+        if (receiver == address(0) || receiver == address(this)) revert InvalidRecipient(receiver);
 
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.AssetConfig memory cfg = r.assetConfig[asset];
@@ -521,7 +521,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (poolId == 0) {
             // Hub deposit: asset must be a hub asset; mints DLRS 1:1.
             if (cfg.poolId != 0) revert WrongPool(asset, poolId);
-            return _depositHub(r, asset, cfg.scalingFactor, amount);
+            return _depositHub(r, asset, cfg.scalingFactor, amount, receiver);
         }
 
         // Spoke deposit. The pool must be a live, active spoke (no new liquidity once winding down).
@@ -530,22 +530,25 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (p.status != RegistryStorage.PoolStatus.Active) revert SpokeWindingDown(poolId);
         if (cfg.poolId == poolId) {
             // The spoke's own asset enters that spoke's active reserve.
-            return _depositSpokeAsset(r, p, poolId, asset, cfg.scalingFactor, amount);
+            return _depositSpokeAsset(r, p, poolId, asset, cfg.scalingFactor, amount, receiver);
         }
         if (cfg.poolId == 0) {
             // A hub asset funds the spoke's DLRS side (enters hub reserves, credits dlrsReserve).
-            return _depositSpokeFunding(r, p, poolId, asset, cfg.scalingFactor, amount);
+            return _depositSpokeFunding(r, p, poolId, asset, cfg.scalingFactor, amount, receiver);
         }
         revert WrongPool(asset, poolId); // asset belongs to a different spoke
     }
 
-    /// @dev Hub deposit: pull the hub asset into hub reserves and mint DLRS 1:1 to the depositor.
-    function _depositHub(RegistryStorage.Layout storage r, address asset, uint64 scaling, uint256 amount)
-        internal
-        returns (uint256 units)
-    {
+    /// @dev Hub deposit: pull the hub asset from the caller into hub reserves and mint DLRS 1:1 to
+    ///      `receiver`.
+    function _depositHub(
+        RegistryStorage.Layout storage r,
+        address asset,
+        uint64 scaling,
+        uint256 amount,
+        address receiver
+    ) internal returns (uint256 nativePulled, uint256 units) {
         PegLib.checkInflow(asset); // per-asset/hub-pool deposit pause + oracle peg check
-        uint256 nativePulled;
         (units, nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
@@ -553,23 +556,25 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         _pullExact(asset, nativePulled); // rejects fee-on-transfer
 
         r.reserves[0][asset] += units;
-        DLRS(CoreStorage.layout().dlrs).mint(msg.sender, units);
+        DLRS(CoreStorage.layout().dlrs).mint(receiver, units);
 
-        emit Deposit(msg.sender, 0, asset, nativePulled, units);
+        emit Deposit(receiver, 0, asset, msg.sender, nativePulled, units);
     }
 
     /// @dev Spoke-asset LP: the spoke asset enters that spoke's active reserve and mints receipt shares
-    ///      pro-rata against the pool value (spokeReserve + dlrsReserve). No DLRS is minted.
+    ///      to `receiver` pro-rata against the pool value (spokeReserve + dlrsReserve). No DLRS is minted.
     function _depositSpokeAsset(
         RegistryStorage.Layout storage r,
         RegistryStorage.Pool storage p,
         uint16 poolId,
         address asset,
         uint64 scaling,
-        uint256 amount
-    ) internal returns (uint256 shares) {
+        uint256 amount,
+        address receiver
+    ) internal returns (uint256 nativePulled, uint256 shares) {
         PegLib.checkInflow(asset); // spoke asset: deposit pause + spoke-pool pause + peg
-        (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, scaling);
+        uint256 units;
+        (units, nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
         uint256 poolValueBefore = r.reserves[poolId][asset] + p.dlrsReserve;
@@ -579,28 +584,30 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         _pullExact(asset, nativePulled);
 
         r.reserves[poolId][asset] += units;
-        r.receiptShares[poolId][msg.sender] += shares;
+        r.receiptShares[poolId][receiver] += shares;
         r.receiptTotalShares[poolId] += shares;
 
-        emit SpokeLiquidityAdded(poolId, msg.sender, asset, nativePulled, units, shares);
+        emit SpokeLiquidityAdded(poolId, receiver, asset, msg.sender, nativePulled, units, shares);
 
         // The new spoke reserve can now settle waiting hub->spoke demand (hubAsset -> this spoke asset).
         _triggerSpokeQueues(asset, true);
     }
 
     /// @dev Hub-asset LP into a spoke: the hub asset enters HUB reserves and credits the spoke's
-    ///      internal `dlrsReserve` (streamlined, no wallet DLRS round-trip), minting receipt shares
-    ///      pro-rata. Hub-reserve backing and dlrsReserve grow together, preserving DLRS conservation.
+    ///      internal `dlrsReserve` (streamlined, no wallet DLRS round-trip), minting receipt shares to
+    ///      `receiver` pro-rata. Hub-reserve backing and dlrsReserve grow together, preserving DLRS conservation.
     function _depositSpokeFunding(
         RegistryStorage.Layout storage r,
         RegistryStorage.Pool storage p,
         uint16 poolId,
         address hubAsset,
         uint64 scaling,
-        uint256 amount
-    ) internal returns (uint256 shares) {
+        uint256 amount,
+        address receiver
+    ) internal returns (uint256 nativePulled, uint256 shares) {
         PegLib.checkInflow(hubAsset); // hub asset: deposit pause + hub-pool pause + peg
-        (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, scaling);
+        uint256 units;
+        (units, nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
         address spokeAsset = p.assets[0]; // a spoke has exactly one spoke asset
@@ -612,10 +619,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
         r.reserves[0][hubAsset] += units; // hub asset backs the new DLRS-side liquidity
         p.dlrsReserve += units; // credit the spoke's DLRS side (no wallet DLRS minted)
-        r.receiptShares[poolId][msg.sender] += shares;
+        r.receiptShares[poolId][receiver] += shares;
         r.receiptTotalShares[poolId] += shares;
 
-        emit SpokeLiquidityAdded(poolId, msg.sender, hubAsset, nativePulled, units, shares);
+        emit SpokeLiquidityAdded(poolId, receiver, hubAsset, msg.sender, nativePulled, units, shares);
 
         // The new DLRS side can now settle waiting spoke->hub demand (this spoke asset -> hubAsset).
         _triggerSpokeQueues(spokeAsset, false);

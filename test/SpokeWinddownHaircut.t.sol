@@ -58,14 +58,14 @@ contract SpokeWinddownHaircutTest is Test {
     function _depositSpokeAsset(address who, uint256 amt) internal {
         vm.startPrank(who);
         rlusd.approve(address(store), amt);
-        store.deposit(spoke, address(rlusd), amt, block.timestamp);
+        store.deposit(spoke, address(rlusd), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
     function _fund(address who, uint256 amt) internal {
         vm.startPrank(who);
         usdc.approve(address(store), amt);
-        store.deposit(spoke, address(usdc), amt, block.timestamp);
+        store.deposit(spoke, address(usdc), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -93,10 +93,10 @@ contract SpokeWinddownHaircutTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -411,7 +411,7 @@ contract SpokeWinddownHaircutTest is Test {
         _fund(alice, 400e6); // dlrsReserve 400, hub usdc 400, shares 400
         vm.startPrank(alice);
         usdt.approve(address(store), 600e6);
-        store.deposit(spoke, address(usdt), 600e6, block.timestamp); // dlrsReserve 1000, hub usdt 600, shares 1000
+        store.deposit(spoke, address(usdt), 600e6, alice, block.timestamp); // dlrsReserve 1000, hub usdt 600, shares 1000
         vm.stopPrank();
 
         uint256 usdcBefore = usdc.balanceOf(alice);

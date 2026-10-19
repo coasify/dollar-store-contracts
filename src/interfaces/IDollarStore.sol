@@ -141,13 +141,15 @@ interface IDollarStore {
     event MinDlrsReserveSet(uint16 indexed poolId, uint256 oldMin, uint256 newMin);
     /// @notice Emitted when a spoke pool is removed (killed): paused and all its assets unlisted.
     event PoolRemoved(uint16 indexed poolId);
-    /// @notice Emitted when an LP adds liquidity to a spoke (spoke asset, or a hub asset funding the
-    ///         spoke's DLRS side) and receives non-transferable receipt shares. `valueUnits` is the
-    ///         normalized 6dp value added; `sharesMinted` is the receipt shares credited.
+    /// @notice Emitted when liquidity is added to a spoke (spoke asset, or a hub asset funding the
+    ///         spoke's DLRS side). `caller` paid `nativeAmount` (native asset pulled); `receiver` was
+    ///         credited `sharesMinted` non-transferable receipt shares. `valueUnits` is the normalized
+    ///         6dp value added.
     event SpokeLiquidityAdded(
         uint16 indexed poolId,
-        address indexed provider,
+        address indexed receiver,
         address indexed asset,
+        address caller,
         uint256 nativeAmount,
         uint256 valueUnits,
         uint256 sharesMinted
@@ -241,10 +243,15 @@ interface IDollarStore {
 
     // ============ Hub Deposit / Withdraw ============
 
-    /// @notice Emitted on a deposit. `nativeAmount` is what was actually pulled; `units` is the
-    ///         normalized 6dp amount credited (and DLRS minted for the hub).
+    /// @notice Emitted on a hub deposit (a spoke deposit emits SpokeLiquidityAdded instead). `caller`
+    ///         paid `amountIn` (native asset pulled); `receiver` was minted `receiptAmount` DLRS.
     event Deposit(
-        address indexed user, uint16 indexed poolId, address indexed asset, uint256 nativeAmount, uint256 units
+        address indexed receiver,
+        uint16 indexed poolId,
+        address indexed asset,
+        address caller,
+        uint256 amountIn,
+        uint256 receiptAmount
     );
     /// @notice Emitted once per hub asset paid on a withdrawal (hub exits pay every hub asset held).
     ///         `units` is normalized 6dp; `nativeAmount` is the transfer in the asset's own decimals.
@@ -266,15 +273,24 @@ interface IDollarStore {
     /// @notice The asset delivered less than expected (fee-on-transfer / non-standard); unsupported.
     error FeeOnTransferNotSupported(address asset);
 
-    /// @notice Deposit `amount` (native units) into pool `poolId`. Into the hub (poolId 0), a hub asset
-    ///         mints DLRS 1:1 in normalized units. Into a spoke, the spoke's asset or a hub asset mints
-    ///         non-transferable receipt shares and emits SpokeLiquidityAdded. Sub-unit dust stays with
-    ///         the caller.
-    /// @return receiptUnits For the hub, the DLRS minted (normalized 6dp). For a spoke, the receipt
-    ///         shares credited, which stop matching units once the spoke takes a write-down.
-    function deposit(uint16 poolId, address asset, uint256 amount, uint256 deadline)
+    /// @notice Deposit into pool `poolId`, paid by the caller and owned by `receiver`. Into the hub
+    ///         (poolId 0), a hub asset mints DLRS 1:1 in normalized units. Into a spoke, the spoke's asset
+    ///         or a hub asset mints non-transferable receipt shares and emits SpokeLiquidityAdded. With
+    ///         S = 10**(decimals - 6), `amount` is rounded down to a whole multiple of S and only that
+    ///         much is pulled; the rest stays with the caller.
+    ///         Anyone can deposit for any receiver, unasked: it takes nothing from the receiver, but a
+    ///         contract must not assume its receipt balance equals its own deposits. The position is
+    ///         inaccessible unless the receiver can call `withdraw`, and receipts cannot be transferred
+    ///         to another owner, so a receiver that can never call it leaves the position stuck for good.
+    /// @param amount Native budget of `asset`.
+    /// @param receiver Owner of the DLRS or shares. Pass the caller's own address to deposit for
+    ///        yourself; reverts InvalidRecipient for the zero address or DollarStore.
+    /// @return amountIn Native `asset` pulled from the caller.
+    /// @return receiptAmount For the hub, the DLRS minted (6 decimals). For a spoke, the receipt shares
+    ///         credited, a count that stops matching dollars once the spoke takes a write-down.
+    function deposit(uint16 poolId, address asset, uint256 amount, address receiver, uint256 deadline)
         external
-        returns (uint256 receiptUnits);
+        returns (uint256 amountIn, uint256 receiptAmount);
 
     /// @notice Proportional exit. Hub (poolId 0): burn `units` DLRS and receive your slice of every hub
     ///         asset. Spoke (poolId >= 1): burn `units` receipt shares and receive your slice of the spoke
@@ -353,7 +369,7 @@ interface IDollarStore {
     ///         for a smaller retry; simulate the intended call. `requestedAmountOut` is the full output,
     ///         floor(amount / So) * Sw.
     error InsufficientLiquidity(address wantAsset, uint256 fillableAmountOut, uint256 requestedAmountOut);
-    /// @notice A swap recipient is the zero address or DollarStore itself.
+    /// @notice A swap recipient or deposit receiver is the zero address or DollarStore itself.
     error InvalidRecipient(address recipient);
     /// @notice No queue position exists with this id.
     error QueuePositionNotFound(uint256 positionId);

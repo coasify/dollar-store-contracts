@@ -121,7 +121,7 @@ contract ParkedEscrowTest is Test {
     function _parkViaFunding(address who, uint256 usdcAmt) internal {
         usdc.setBlocked(who, true);
         vm.prank(dana);
-        store.deposit(spoke, address(usdc), usdcAmt, block.timestamp);
+        store.deposit(spoke, address(usdc), usdcAmt, dana, block.timestamp);
     }
 
     // ============ Blocked seller: the line advances past her, her escrow stays hers ============
@@ -129,7 +129,7 @@ contract ParkedEscrowTest is Test {
     function test_frozenSeller_isParked_lineAdvances_noShares() public {
         // Carol LPs 400 PYUSD. Alice then Bob queue PYUSD -> USDC; nothing can pay them yet.
         vm.prank(carol);
-        store.deposit(spoke, address(pyusd), 400e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 400e6, carol, block.timestamp);
         uint256 aliceId = _sellPyusdForUsdc(alice, 100e6);
         _sellPyusdForUsdc(bob, 500e6); // min order size once the line is non-empty
 
@@ -180,7 +180,7 @@ contract ParkedEscrowTest is Test {
 
     function test_twoIssuerFreeze_noExitInAnyOtherAsset_spokeStillRetirable() public {
         vm.prank(carol);
-        store.deposit(spoke, address(pyusd), 400e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 400e6, carol, block.timestamp);
         uint256 aliceId = _sellPyusdForUsdc(alice, 100e6);
 
         pyusd.setBlocked(alice, true);
@@ -260,7 +260,7 @@ contract ParkedEscrowTest is Test {
         vm.cool(address(store));
         vm.prank(dana);
         uint256 g = gasleft();
-        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 500e6, dana, block.timestamp);
         gasUsed = g - gasleft();
 
         assertEq(pyusd.balanceOf(alice) - pyBefore, 100e6, "alice paid in full");
@@ -299,7 +299,7 @@ contract ParkedEscrowTest is Test {
 
         // A deposit pays the queued position in full: the remaining parked one moves to the front.
         vm.prank(dana);
-        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 500e6, dana, block.timestamp);
         ids = store.getUserQueuePositions(alice);
         assertEq(ids.length, 1);
         assertEq(ids[0], parkedB);
@@ -341,7 +341,7 @@ contract ParkedEscrowTest is Test {
         // Dana's PYUSD deposit settles the line: the PYUSD payout succeeds, so Alice is paid in full.
         uint256 pyBefore = pyusd.balanceOf(alice);
         vm.prank(dana);
-        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 500e6, dana, block.timestamp);
 
         assertEq(pyusd.balanceOf(alice) - pyBefore, 100e6, "paid in the asset she wanted");
         assertFalse(store.isQueuePositionParked(id));

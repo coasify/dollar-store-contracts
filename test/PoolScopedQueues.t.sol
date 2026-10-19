@@ -137,7 +137,7 @@ contract PoolScopedQueuesTest is Test {
         // are zero. Dave then buys RLUSD with USDC; the spoke is empty, so he is queued. Different pairs,
         // so Alice and Dave never match each other.
         vm.prank(lp);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, lp, block.timestamp);
         vm.prank(alice);
         (,, uint256 queuedSell,) = store.swapOrQueue(address(rlusd), address(usdt), 500e18, 0, block.timestamp);
         assertEq(queuedSell, 500e18);
@@ -166,8 +166,8 @@ contract PoolScopedQueuesTest is Test {
 
         // Liquidity arriving in the new spoke, in either direction, settles ITS lines only.
         vm.startPrank(lp);
-        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
-        store.deposit(spoke2, address(usdt), 1_000e6, block.timestamp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
+        store.deposit(spoke2, address(usdt), 1_000e6, lp, block.timestamp);
         vm.stopPrank();
         assertEq(_amount(liveSellId), 0, "live seller settled by the successor's USDT");
         assertEq(_amount(buyId), 500e6, "old buyer not settled by the successor's RLUSD");
@@ -235,8 +235,8 @@ contract PoolScopedQueuesTest is Test {
 
         // Hub liquidity in both assets fills a new swap instantly and leaves the old positions untouched.
         vm.startPrank(lp);
-        store.deposit(0, address(rlusd), 1_000e18, block.timestamp);
-        store.deposit(0, address(usdt), 1_000e6, block.timestamp);
+        store.deposit(0, address(rlusd), 1_000e18, lp, block.timestamp);
+        store.deposit(0, address(usdt), 1_000e6, lp, block.timestamp);
         vm.stopPrank();
         vm.prank(carol);
         (, uint256 out) = store.swapExactInput(address(usdc), address(rlusd), 100e6, 0, carol, block.timestamp);
@@ -294,7 +294,7 @@ contract PoolScopedQueuesTest is Test {
     ///      LP then takes the whole deposit back: the old position was never paid from it.
     function _newLpIsWholeAfterOldCancel(uint16 spoke2, uint256 id, uint256 aliceGets) internal {
         vm.prank(lp);
-        uint256 shares = store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+        (, uint256 shares) = store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
         uint256 a = rlusd.balanceOf(alice);
         vm.prank(alice);
         store.cancelQueue(id);
@@ -374,12 +374,12 @@ contract PoolScopedQueuesTest is Test {
         assertTrue(store.isProbeExempt(address(rlusd)), "exemption kept");
         vm.prank(lp);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(rlusd)));
-        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
 
         vm.prank(unpauser);
         store.unpauseDeposits(address(rlusd));
         vm.prank(lp);
-        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
     }
 
     function test_relistAsHubAsset_keepsDepositPauseAndProbeExemption() public {
@@ -393,7 +393,7 @@ contract PoolScopedQueuesTest is Test {
         assertTrue(store.isProbeExempt(address(rlusd)), "exemption kept");
         vm.prank(lp);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(rlusd)));
-        store.deposit(0, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(0, address(rlusd), 1_000e18, lp, block.timestamp);
     }
 
     /// @notice Positive control: an asset removed with neither flag set is relisted with neither.
@@ -403,6 +403,6 @@ contract PoolScopedQueuesTest is Test {
         assertFalse(store.isDepositPaused(address(rlusd)));
         assertFalse(store.isProbeExempt(address(rlusd)));
         vm.prank(lp);
-        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
     }
 }

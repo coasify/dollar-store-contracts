@@ -59,7 +59,7 @@ contract HubSwapQueueTest is Test {
     function _deposit(address who, MockERC20 token, uint256 amt) internal {
         vm.startPrank(who);
         token.approve(address(store), amt);
-        store.deposit(0, address(token), amt, block.timestamp);
+        store.deposit(0, address(token), amt, who, block.timestamp);
         vm.stopPrank();
     }
 

@@ -54,7 +54,7 @@ contract LaunchCapsTest is Test {
     function _deposit(address who, MockERC20 token, uint256 amt) internal {
         vm.startPrank(who);
         token.approve(address(store), amt);
-        store.deposit(0, address(token), amt, block.timestamp);
+        store.deposit(0, address(token), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -81,7 +81,7 @@ contract LaunchCapsTest is Test {
                 IDollarStore.LaunchCapExceeded.selector, uint16(0), uint256(1_100e6), uint256(1_000e6)
             )
         );
-        store.deposit(0, address(usdc), 500e6, block.timestamp); // 600 + 500 = 1100 > 1000
+        store.deposit(0, address(usdc), 500e6, alice, block.timestamp); // 600 + 500 = 1100 > 1000
         vm.stopPrank();
     }
 
@@ -98,7 +98,7 @@ contract LaunchCapsTest is Test {
                 IDollarStore.LaunchCapExceeded.selector, uint16(0), uint256(1_100e6), uint256(1_000e6)
             )
         );
-        store.deposit(0, address(usdt), 300e6, block.timestamp);
+        store.deposit(0, address(usdt), 300e6, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -133,7 +133,7 @@ contract LaunchCapsTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, uint16(0), uint256(600e6), uint256(500e6))
         );
-        store.deposit(0, address(usdc), 600e6, block.timestamp);
+        store.deposit(0, address(usdc), 600e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -246,7 +246,7 @@ contract LaunchCapsTest is Test {
         vm.startPrank(alice);
         spokeAsset.approve(address(timelocked), 300_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, expectedPoolId, 300_000e6, cap));
-        timelocked.deposit(expectedPoolId, address(spokeAsset), 300_000e18, block.timestamp);
+        timelocked.deposit(expectedPoolId, address(spokeAsset), 300_000e18, alice, block.timestamp);
         vm.stopPrank();
     }
 }

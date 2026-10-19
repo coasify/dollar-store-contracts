@@ -71,7 +71,7 @@ contract HubSwapFallbackTest is Test {
     function _deposit(address who, MockBlacklistERC20 token, uint256 amt) internal {
         vm.startPrank(who);
         token.approve(address(store), amt);
-        store.deposit(0, address(token), amt, block.timestamp);
+        store.deposit(0, address(token), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -254,7 +254,7 @@ contract HubSwapFallbackTest is Test {
 
         vm.startPrank(alice);
         evil.approve(address(store), 1_000e6);
-        store.deposit(0, address(evil), 1_000e6, block.timestamp);
+        store.deposit(0, address(evil), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
 
         evil.arm(address(store)); // next payout reenters store.withdraw
