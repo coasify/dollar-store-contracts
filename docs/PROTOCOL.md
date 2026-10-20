@@ -37,7 +37,7 @@ Every listed asset has a price feed. Inflows, meaning deposits and the offered s
 
 ## Deposits
 
-`deposit(poolId, asset, amount, receiver, deadline)` is paid by the caller and owned by `receiver`. It pulls `amountIn = floor(amount / S) × S` of `asset` from the caller, with `S = 10^(decimals - 6)`, leaving any remainder below `S` with the caller, and credits the DLRS or receipt shares to `receiver`. It returns `(amountIn, receiptAmount)`: the native amount pulled, and the DLRS minted (6 decimals) for the hub or the receipt shares minted for a spoke. A caller depositing for itself passes its own address; the zero address and DollarStore revert `InvalidRecipient`.
+`deposit(poolId, asset, amount, receiver, deadline)` is paid by the caller and owned by `receiver`. It pulls `amountIn = floor(amount / S) × S` of `asset` from the caller, with `S = 10^(decimals - 6)`, leaving any remainder below `S` with the caller (see [Worked examples](#worked-examples)), and credits the DLRS or receipt shares to `receiver`. It returns `(amountIn, receiptAmount)`: the native amount pulled, and the DLRS minted (6 decimals) for the hub or the receipt shares minted for a spoke. A caller depositing for itself passes its own address; the zero address and DollarStore revert `InvalidRecipient`.
 
 A receiver lets a contract deposit for a user: a zap that swaps ETH to USDC and deposits in one transaction, a bridge that deposits on arrival, a treasury depositing for many wallets. Without it the contract would own the position, and since receipts cannot be transferred it could never hand it over. Two consequences follow:
 
@@ -76,7 +76,7 @@ Exits cannot be paused and are not bounded by the minimum DLRS-side reserve. For
 
 Every swap is one for one between two listed assets, measured in 6-decimal units. Three routes exist: hub asset to hub asset, hub asset to spoke asset, and spoke asset to hub asset. A swap between two spoke assets runs as two of these, see below.
 
-Every swap function takes `amount` as a native budget of the offered asset. With `S = 10^(decimals - 6)` for each token, it pulls `amountIn = floor(amount / S_offer) × S_offer`, and any remainder below `S_offer` stays with the caller; an `amount` below `S_offer` reverts `ZeroAmount`. The output is the filled units times `S_want`, which is exact, so a full fill delivers `floor(amount / S_offer) × S_want`. For example, 1,000.0000005 USDS (18 decimals) pulls 1,000 USDS and leaves 0.0000005 USDS with the caller; 1,000 USDC (6 decimals) swapped for USDS delivers 1,000,000,000,000,000,000,000. `minAmountOut` is compared with that native output exactly as passed, never converted to 6 decimals, so a minimum one wei above the output reverts.
+Every swap function takes `amount` as a native budget of the offered asset. With `S = 10^(decimals - 6)` for each token, it pulls `amountIn = floor(amount / S_offer) × S_offer`, and any remainder below `S_offer` stays with the caller; an `amount` below `S_offer` reverts `ZeroAmount`. The output is the filled units times `S_want`, which is exact, so a full fill delivers `floor(amount / S_offer) × S_want`. For example, 1,000.0000005 USDS (18 decimals) pulls 1,000 USDS and leaves 0.0000005 USDS with the caller; 1,000 USDC (6 decimals) swapped for USDS delivers 1,000,000,000,000,000,000,000. [Worked examples](#worked-examples) has every direction between 6 and 18 decimals. `minAmountOut` is compared with that native output exactly as passed, never converted to 6 decimals, so a minimum one wei above the output reverts.
 
 `swapOrQueue(offerAsset, wantAsset, amount, minAmountOut, deadline)` fills what it can now and queues the rest, in this order:
 
@@ -217,6 +217,27 @@ Position history is reconstructable from `QueueJoined`, `QueueFilled`, `QueuePar
 Native, in the token's own decimals: every swap function's `amount`, `minAmountOut`, `amountIn`, `amountOut` and `amountInQueued`; the `Swap` event; `MinAmountNotMet` and `InsufficientLiquidity` (both name the wanted asset); `getSwapQuote`; deposit `amount` and `amountIn`; `Deposit.amountIn`; the `withdraw` and `previewWithdraw` `amounts`, `minAmountsOut` and `WithdrawMinNotMet`; and the `nativeAmount` fields of `Withdraw` and `SpokeLiquidityAdded`. Receipt amounts (`receiptAmount`, `Deposit.receiptAmount`, `SpokeLiquidityAdded.sharesMinted`, `SpokeWithdrawn.sharesBurned`) are DLRS amounts or share counts.
 
 In 6-decimal units, and named so where they are named: the queue events (`QueueJoined`, `QueueFilled`, `QueueCancelled`, `QueueParked`) and queue views (`getQueuePosition`, `getQueueDepth`, `getMinimumOrderSize`, `processQueue`'s amount); `OrderTooSmall`; `SpokeSwapRouted`'s amount; reserves, claims, caps and floors and their events and errors, including `InsufficientReserves`, whose amounts are hub totals even though it names an asset; `Withdraw.units`; `SpokeLiquidityAdded.valueUnits`; `SpokeWithdrawn.spokeUnits` and `hubUnits`. DLRS has 6 decimals, so a DLRS amount is both. Spoke receipt shares are a count, not dollars.
+
+### Worked examples
+
+Every number below is the raw integer passed to or returned by the contract, with USDC and USDT (6 decimals) and USDS and DAI (18 decimals) as the example tokens. Each is pinned by a test in `test/UnitExamples.t.sol`.
+
+**Swaps.** `swapExactInput` with enough liquidity, and `minAmountOut` set to demand the full fill:
+
+| Swap | `amount` passed | `amountIn` pulled | Left with the caller | `amountOut` and the full-fill `minAmountOut` |
+|---|---|---|---|---|
+| USDC to USDS (6 to 18) | `1000000000` (1,000 USDC) | `1000000000` | nothing | `1000000000000000000000` (1,000 USDS) |
+| USDS to USDC (18 to 6) | `1000000000500000000000` (1,000.0000005 USDS) | `1000000000000000000000` | `500000000000` (0.0000005 USDS) | `1000000000` (1,000 USDC) |
+| USDS to DAI (18 to 18) | `1000000000500000000000` (1,000.0000005 USDS) | `1000000000000000000000` | `500000000000` (0.0000005 USDS) | `1000000000000000000000` (1,000 DAI) |
+| USDC to USDT (6 to 6) | `1000000000` (1,000 USDC) | `1000000000` | nothing | `1000000000` (1,000 USDT) |
+
+- Only an offered token with more than 6 decimals can leave dust: the part below one 6-decimal unit (`10^12` wei for USDS). The contract never pulls it, so it stays in the caller's wallet and needs no refund. `amount - amountIn` is how much stayed.
+- An `amount` below one 6-decimal unit pulls nothing and reverts `ZeroAmount`: 0.0000009 USDS is `900000000000`.
+- `minAmountOut` is in the wanted token's decimals. For a USDS output, `1000000000` means 0.000000001 USDS, not 1,000 USDS, so it accepts almost any fill: with 1 USDS in the hub, a 1,000 USDC `swapOrQueue` with that minimum fills 1 USDS (`1000000000000000000`) and queues 999 USDC (`amountInQueued = 999000000`).
+
+**Deposit.** Depositing `100000000500000000000` (100.0000005 USDS) into the hub pulls `amountIn = 100000000000000000000` (100 USDS), mints `receiptAmount = 100000000` (100 DLRS), and leaves `500000000000` (0.0000005 USDS) in the caller's wallet. A USDC deposit never leaves dust.
+
+**Withdrawal.** With a hub of 600 USDC and 400 USDS, `withdraw(0, 100000000, [], deadline)` burns 100 DLRS and returns `assets = [USDC, USDS]` and `amounts = [60000000, 40000000000000000000]`: 60 USDC and 40 USDS, each in its own decimals, so the two numbers must not be added. `previewWithdraw(0, 100000000)` returns the same. Minimums, if given, follow the same order and decimals: `[59000000, 39000000000000000000]` accepts up to 1 less of each.
 
 A minimal exact-input adapter, for a router that holds the offered token:
 
