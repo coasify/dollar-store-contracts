@@ -20,8 +20,9 @@ This document describes the protocol as implemented in `src/`. It is written for
 8. [Loss events](#loss-events)
 9. [Issuer freezes](#issuer-freezes)
 10. [Roles](#roles)
-11. [Views and events for integrators](#views-and-events-for-integrators)
-12. [Reading the code](#reading-the-code)
+11. [Integrating](#integrating)
+12. [Views and events for integrators](#views-and-events-for-integrators)
+13. [Reading the code](#reading-the-code)
 
 ## Pools, assets, and receipts
 
@@ -190,6 +191,89 @@ Five roles. The upgrader and the governor hand themselves off in two steps; the 
 A pause never blocks `withdraw` or `cancelQueue`. What each kind of pause blocks is tabulated in [SECURITY.md](../SECURITY.md#emergency-playbook-pause-then-fix).
 
 What no role can do: cancel, move, reassign, or reprice a user's position other than through the pro-rata haircut after a real loss; choose which asset an exit pays; take escrow or reserves out of the contract. `rescueTokens` sweeps only balance above what the books account for, and queue escrow is always accounted for, whether or not its asset is still listed.
+
+## Integrating
+
+How to call DollarStore from a wallet, an app or a router contract. Every token amount below is native, in the token's own decimals; [Units at the edge](#units-at-the-edge) lists the exceptions and [Worked examples](#worked-examples) shows the numbers.
+
+### Where funds can get stuck
+
+> [!CAUTION]
+> **No privileged role can move, cancel or reassign a position for a user.** DollarStore only rejects the zero address and its own address as a `receiver` or `recipient`. Every other address is accepted, so these mistakes are permanent:
+>
+> - **A deposit to a `receiver` that cannot call `withdraw` is stuck for good.** Only the receiver can exit, and receipts cannot be transferred. A typo, an address nobody holds the key to, or a contract with no way to call `withdraw` all lock the deposit.
+> - **A swap's output goes to `recipient` at once and cannot be reversed.** `swapExactInput` and `swapSpokeToSpoke` pay whatever address is passed.
+> - **A `swapOrQueue` sent by a contract leaves the queued part owned by that contract.** Only the owner can cancel, and later fills are paid to it. A router that cannot call `cancelQueue` or pass on what arrives later strands the user's money. Contracts should call `swapExactInput` instead.
+>
+> Two cases are outside the user's control. A queued or parked position, or an exit, can stay blocked while an issuer freezes the owner's wallet: a parked position's only exit is `cancelQueue`, which needs the refund transfer to succeed, and an exit cannot complete while the issuer of any asset it pays or probes refuses a transfer to the wallet (the token's own error, or `ExitBlockedByIssuer`). See [Parked positions](#parked-positions) and [Issuer freezes](#issuer-freezes).
+
+### Approvals
+
+Deposits and swaps pull the offered token from the caller with `transferFrom`, so the caller approves DollarStore for it first. An exit needs no approval: it burns the caller's DLRS or receipt shares directly. Receipts cannot be transferred, so a deposit's position always belongs to the `receiver` named in the call.
+
+### Depositing
+
+```solidity
+IERC20(asset).forceApprove(address(store), amount);
+(uint256 amountIn, uint256 receiptAmount) = store.deposit(poolId, asset, amount, user, deadline);
+// poolId 0 is the hub. `amount - amountIn` (under one 6-decimal unit) stayed with the caller.
+```
+
+Pass the user's own address as `receiver` unless a contract is depositing for someone else. **A receiver that cannot call `withdraw` locks the deposit for good** ([Where funds can get stuck](#where-funds-can-get-stuck)). A frontend should default to the connected wallet and warn when the receiver is changed.
+
+### Swapping
+
+| Who is calling | Function | Why |
+|---|---|---|
+| A user, from their own wallet, willing to wait for part of it | `swapOrQueue` | Fills what it can now and queues the rest as a position the caller owns. Track it with the returned `positionId` |
+| A router, an aggregator or any contract acting for a user | `swapExactInput` | All or nothing, never queues, pays `recipient`. A queued position would belong to the router, not the user |
+| Either, between two spoke assets | `swapSpokeToSpoke` | All or nothing through the hub assets in `via`, in order; see [Swaps](#swaps) for how to order them |
+
+**A wrong `recipient` cannot be undone, and a contract calling `swapOrQueue` owns whatever it queues** ([Where funds can get stuck](#where-funds-can-get-stuck)). The router path is the adapter under [Units at the edge](#units-at-the-edge).
+
+### Exiting
+
+Preview, set minimums from the preview, then withdraw; the code is under [Exits](#exits). Exits cannot be paused. Each amount returned is in the decimals of the asset at the same position.
+
+### Simulating before sending
+
+The views compute amounts but take no caller or recipient and move no tokens. `getSwapQuote` and `previewWithdraw` therefore cannot see a missing approval or balance, a caller or recipient frozen by an issuer, a payout to a queued owner that will fail, or an issuer blocking an exit's zero-value probe. A simulation can: run the exact call as an `eth_call` from the user's address, with the real arguments, and read what it returns or the error it reverts with. A successful simulation returns the same values the transaction would at that block.
+
+With Foundry's `cast`, for 1,000.0000005 USDS to USDC paid to the user:
+
+```bash
+cast call "$STORE" \
+  "swapExactInput(address,address,uint256,uint256,address,uint256)(uint256,uint256)" \
+  "$USDS" "$USDC" 1000000000500000000000 0 "$USER" "$DEADLINE" \
+  --from "$USER" --rpc-url "$RPC_URL"
+# prints amountIn and amountOut: 1000000000000000000000 and 1000000000 when liquidity covers it
+```
+
+In viem, `publicClient.simulateContract({ account: user, address: store, abi, functionName: "swapExactInput", args })` does the same and returns `result`. For an exit, simulate `withdraw` itself, not only `previewWithdraw`, to include the issuer probes and transfers.
+
+Then:
+
+- Set `minAmountOut`, or each entry of `minAmountsOut`, from the simulated result, less the tolerance the user accepts. A minimum of 0 in the simulation shows the output without rejecting it; never send 0.
+- Simulate after the approval, or with a state override that sets it; otherwise the simulation reverts on `transferFrom`.
+- Use a short `deadline`. Between simulation and inclusion other swaps, deposits, exits, price updates and freezes can change the result; the minimum and the deadline are what protect the user, not the simulation.
+
+### Reading a revert
+
+| Error | What it means | What to do |
+|---|---|---|
+| `DeadlineExpired` | The transaction landed after `deadline` | Simulate again and resend |
+| `ZeroAmount` | The amount is below one 6-decimal unit, or an exit is worth less than one unit | Send more |
+| `MinAmountNotMet(wantAsset, amountOut, minAmountOut)` | The swap would deliver `amountOut`, below the minimum | Simulate again; the state moved |
+| `InsufficientLiquidity(wantAsset, fillableAmountOut, requestedAmountOut)` | An all-or-nothing swap can deliver only `fillableAmountOut` now | Swap a smaller amount, try another `via` order, or let the user queue with `swapOrQueue` |
+| `OrderTooSmall`, `QueueFull` | The remainder `swapOrQueue` would queue is below the line's minimum, or the line is full; the whole swap reverts | Swap only what fills now, or use `swapExactInput` |
+| `InvalidRecipient` | The recipient or receiver is the zero address or DollarStore | Pass the user's address |
+| `MinAmountsLength`, `WithdrawMinNotMet` | The minimums list does not match the exit's assets, or an asset pays less than its minimum | Build the list from `previewWithdraw` again |
+| `InsufficientReceiptShares` | More DLRS or shares than the caller holds | Withdraw less |
+| `InsufficientReserves` | The hub cannot cover the payout, usually after a loss | See [Loss events](#loss-events) |
+| `ExitBlockedByIssuer(asset, wallet)` | An issuer refuses even a zero transfer to `wallet` | Nothing the caller can change; see [Issuer freezes](#issuer-freezes) |
+| `PriceOutOfBounds`, `PriceStale`, `StaleRound`, `InvalidPrice` | The price check on the asset coming in failed | Try later or with another asset |
+| `EnforcedPause`, `PoolPaused`, `DepositsPaused`, `SpokeWindingDown` | Swaps or deposits are paused, or the spoke takes no new money | Try later; exits stay open |
+| An error from the token itself | A transfer failed: no approval or balance, or a frozen caller or recipient | Fix the approval or balance, or use another recipient |
 
 ## Views and events for integrators
 
