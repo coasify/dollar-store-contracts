@@ -197,7 +197,7 @@ does not match.
 
 `addHubAsset` and `setLaunchCap` are governor-gated, so they are **not** called directly: they are
 scheduled on the governor timelock, wait the delay, then are executed. This is driven by the
-governor Safe.
+governor Safe. The hub launch cap comes first: it must be active before any asset is listed.
 
 Before listing an asset, check it against the listing precondition in [SECURITY.md](../SECURITY.md):
 
@@ -224,6 +224,30 @@ Load both files into this terminal, then set the asset to list and its feed:
 ```bash
 set -a; source .env.sepolia; source .deployed.sepolia; set +a
 USDC=<usdc>;  USDC_FEED=<usdc/usd feed>
+```
+
+Set the launch cap on the hub (poolId 0) first. The hub starts with no cap and is not paused, so once
+an asset is listed anyone can deposit it, and a cap executed after the listing leaves a whole timelock
+delay with no limit. The listings can be scheduled in the same waiting period, but execute none of them
+until `getLaunchCap(0)` prints the cap. The cap limits DLRS supply; hub assets deposited into a spoke
+count against that spoke's cap instead. It is in 6-decimal units: the dollar amount
+followed by six zeros (1,000,000 dollars = `1000000000000`); 0 means no cap. Schedule:
+
+```bash
+CAP=1000000000000
+DATA=$(cast calldata "setLaunchCap(uint16,uint256)" 0 $CAP)
+cast send $GOV_TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" \
+  $PROXY 0 $DATA $ZERO $ZERO "$GOVERNOR_DELAY" \
+  --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia
+```
+
+Wait `GOVERNOR_DELAY`, then execute and check (prints the value of `CAP`):
+
+```bash
+cast send $GOV_TL "execute(address,uint256,bytes,bytes32,bytes32)" \
+  $PROXY 0 $DATA $ZERO $ZERO \
+  --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia &&
+cast call $PROXY "getLaunchCap(uint16)(uint256)" 0 --rpc-url sepolia
 ```
 
 Schedule USDC (the proposer is the governor Safe/EOA):
@@ -266,26 +290,6 @@ cast send $GOV_TL "execute(address,uint256,bytes,bytes32,bytes32)" \
   $PROXY 0 $DATA $ZERO $ZERO \
   --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia &&
 cast call $PROXY "isAssetListed(address)(bool)" $USDT --rpc-url sepolia
-```
-
-Then set the launch cap on the hub (poolId 0). It limits DLRS supply; hub assets deposited into a spoke count against that spoke's cap instead. The cap is in 6-decimal units: the dollar amount
-followed by six zeros (1,000,000 dollars = `1000000000000`); 0 means no cap. Schedule:
-
-```bash
-CAP=1000000000000
-DATA=$(cast calldata "setLaunchCap(uint16,uint256)" 0 $CAP)
-cast send $GOV_TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" \
-  $PROXY 0 $DATA $ZERO $ZERO "$GOVERNOR_DELAY" \
-  --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia
-```
-
-Wait `GOVERNOR_DELAY`, then execute and check (prints the value of `CAP`):
-
-```bash
-cast send $GOV_TL "execute(address,uint256,bytes,bytes32,bytes32)" \
-  $PROXY 0 $DATA $ZERO $ZERO \
-  --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia &&
-cast call $PROXY "getLaunchCap(uint16)(uint256)" 0 --rpc-url sepolia
 ```
 
 Optionally create a spoke pool. A spoke holds one asset outside the hub, paired with a DLRS-side
@@ -467,9 +471,11 @@ Before mainnet:
 - Every asset to be listed meets the listing precondition in SECURITY.md, with `setProbeExempt` set
   where a token rejects zero-value transfers.
 
-Mainnet is the same sequence with `.env.mainnet` (real Safes, 14d/7d delays). Before the first
-deposit, confirm on-chain: roles = timelocks/Safe, timelock delays (`getMinDelay`), assets listed, caps
-active on every pool, and the expected `version()`.
+Mainnet is the same sequence with `.env.mainnet` (real Safes, 14d/7d delays). Anyone can deposit once
+an asset is listed, so the hub cap must be active before the first listing executes (Phase 3), not
+merely checked before the first deposit. Before announcing the deployment, confirm on-chain: roles =
+timelocks/Safe, timelock delays (`getMinDelay`), assets listed, caps active on every pool, and the
+expected `version()`.
 
 ---
 
