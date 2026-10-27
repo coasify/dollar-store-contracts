@@ -160,7 +160,7 @@ A spoke cannot be relisted while it is winding down, since its asset is still li
 
 If tokens leave the contract other than through the protocol, for instance an issuer seizing them, the books exceed the balance. Two governance tools reconcile them. Both only ever write balances down; neither moves value to anyone.
 
-- `syncReserves(poolId, asset)`, governor. Writes the pool's reserve of `asset` down to the balance minus queue escrow. Refuses to run if the balance is below the escrow alone.
+- `syncReserves(poolId, asset)`, governor. Writes the pool's reserve of `asset` down to the balance minus queue escrow. Refuses to run if the balance is below the escrow alone, and reverts `ReservesNotDrifted` if there is no loss to write down. Anyone can send tokens to the contract, so anyone can repair a small deficit after a sync is scheduled and make it revert. Schedule each `syncReserves` as its own timelock operation, never in a batch with other calls: a repaired asset's sync then fails on its own, with nothing left to do, and cannot roll back the write-down of another asset.
 - `haircutEscrow(asset, maxPositions)`, guardian, only while the asset's pool is paused. Reduces every position offering `asset`, across every pool that ever listed it and the parked line, by the same ratio so that escrow fits the balance minus reserves. Positions reduced to zero are removed. Reverts if more than `maxPositions` positions would be visited.
 
 Which tool runs first decides whether reserves or queued positions absorb the loss. That is a governance decision and is not constrained by the contract.
