@@ -111,6 +111,8 @@ When both legs fill from reserves, the hub asset taken in the first leg pays the
 
 The offered asset is price-checked as an inflow. In a spoke-to-spoke swap each `via` is checked too, since the second leg moves it into hub reserves, and one that fails the check is skipped. The wanted asset is not.
 
+A skipped `via` does not report why it was skipped. If skipping leaves a spoke-to-spoke swap short, the call reverts `InsufficientLiquidity` like any other shortfall, and `fillableAmountOut` counts only what the remaining entries carried. So while the hub pool is paused, or a hub asset's deposits are paused, or its feed is stale, off peg or unreadable, a call through that hub asset alone, or through only such hub assets, reverts `InsufficientLiquidity(wantAsset, 0, requestedAmountOut)`. A smaller amount or another order of the same list fails the same way. A global pause, a paused spoke, and a failed check on the offered asset still revert with their own errors. Before treating the revert as a liquidity shortage, check each `via`: `isPoolPaused(0)`, `isDepositPaused(via)`, and its feed (from `AssetListed`, or the latest `PriceFeedUpdated`) against `maxStaleness()` and `pegTolerance()`. Pauses are also announced to integrators when they are made.
+
 ## Queues
 
 A **line** is the queue of positions waiting to swap one asset for another in one direction. Lines are keyed by offer asset, want asset, and pool: hub-to-hub lines belong to pool 0, and each spoke owns its own hub-to-spoke and spoke-to-hub lines. A spoke that is removed and later listed again therefore starts with empty lines; see [Spoke lifecycle](#spoke-lifecycle).
@@ -264,7 +266,7 @@ Then:
 | `DeadlineExpired` | The transaction landed after `deadline` | Simulate again and resend |
 | `ZeroAmount` | The amount is below one 6-decimal unit, or an exit is worth less than one unit | Send more |
 | `MinAmountNotMet(wantAsset, amountOut, minAmountOut)` | The swap would deliver `amountOut`, below the minimum | Simulate again; the state moved |
-| `InsufficientLiquidity(wantAsset, fillableAmountOut, requestedAmountOut)` | An all-or-nothing swap can deliver only `fillableAmountOut` now | Swap a smaller amount, try another `via` order, or let the user queue with `swapOrQueue` |
+| `InsufficientLiquidity(wantAsset, fillableAmountOut, requestedAmountOut)` | An all-or-nothing swap can deliver only `fillableAmountOut` now. On `swapSpokeToSpoke` it can also mean hub assets in `via` were skipped because the hub is paused, their deposits are paused or their price check failed; with every `via` skipped, `fillableAmountOut` is 0 (see [Swaps](#swaps)) | Check the `via` hub assets first; if they are healthy, swap a smaller amount, try another `via` order, or let the user queue with `swapOrQueue` |
 | `OrderTooSmall`, `QueueFull` | The remainder `swapOrQueue` would queue is below the line's minimum, or the line is full; the whole swap reverts | Swap only what fills now, or use `swapExactInput` |
 | `InvalidRecipient` | The recipient or receiver is the zero address or DollarStore | Pass the user's address |
 | `MinAmountsLength`, `WithdrawMinNotMet` | The minimums list does not match the exit's assets, or an asset pays less than its minimum | Build the list from `previewWithdraw` again |
