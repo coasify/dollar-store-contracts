@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
@@ -286,7 +287,10 @@ contract HubDepositWithdrawTest is Test {
     function test_withdraw_revertsInsufficientDlrs() public {
         _deposit(bob, usdc, 1_000e6); // reserve exists; alice has no DLRS
         vm.prank(alice);
-        vm.expectRevert(); // ERC20InsufficientBalance from DLRS.burn
+        // A hub exit burns the DLRS first, so the token reverts, not DollarStore (PROTOCOL.md error table).
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, alice, uint256(0), uint256(100e6))
+        );
         store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
     }
 

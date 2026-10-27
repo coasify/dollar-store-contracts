@@ -270,10 +270,16 @@ Then:
 | `OrderTooSmall`, `QueueFull` | The remainder `swapOrQueue` would queue is below the line's minimum, or the line is full; the whole swap reverts | Swap only what fills now, or use `swapExactInput` |
 | `InvalidRecipient` | The recipient or receiver is the zero address or DollarStore | Pass the user's address |
 | `MinAmountsLength`, `WithdrawMinNotMet` | The minimums list does not match the exit's assets, or an asset pays less than its minimum | Build the list from `previewWithdraw` again |
-| `InsufficientReceiptShares` | More DLRS or shares than the caller holds | Withdraw less |
+| `InsufficientReceiptShares(requested, available)` | A spoke exit of more shares than the caller holds | Withdraw less |
+| `ERC20InsufficientBalance(caller, balance, needed)`, from the DLRS token | A hub exit of more DLRS than the caller holds. The exit burns the DLRS first, so the token reverts, not DollarStore. `previewWithdraw` checks only the total supply, so it does not catch this | Withdraw less |
 | `InsufficientReserves` | The hub cannot cover the payout, usually after a loss | See [Loss events](#loss-events) |
 | `ExitBlockedByIssuer(asset, wallet)` | An issuer refuses even a zero transfer to `wallet` | Nothing the caller can change; see [Issuer freezes](#issuer-freezes) |
 | `PriceOutOfBounds`, `PriceStale`, `StaleRound`, `InvalidPrice` | The price check on the asset coming in failed | Try later or with another asset |
+| `AssetNotListed(asset)` | The asset is not listed, or was removed | Use a listed asset (`isAssetListed`) |
+| `WrongPool(asset, poolId)` | A spoke asset deposited into the hub or into another spoke | Deposit it into its own spoke, `assetPoolId(asset)`. Hub assets can go into the hub or any spoke |
+| `LaunchCapExceeded(poolId, attempted, cap)` | The deposit would take the pool above its launch cap. `attempted` and `cap` are 6-decimal: DLRS supply for the hub, the spoke's reserve plus its hub claim for a spoke | Deposit at most `cap` minus what the pool already holds, or another pool |
+| `PoolFullyImpaired` | A deposit into a spoke whose shares are outstanding but whose value is zero | Nothing the caller can change |
+| `FeeOnTransferNotSupported(asset)` | The contract received less than the amount pulled: the token charged a fee | Nothing the caller can change |
 | `EnforcedPause`, `PoolPaused`, `DepositsPaused`, `SpokeWindingDown` | Swaps or deposits are paused, or the spoke takes no new money | Try later; exits stay open |
 | An error from the token itself | A transfer failed: no approval or balance, or a frozen caller or recipient | Fix the approval or balance, or use another recipient |
 
