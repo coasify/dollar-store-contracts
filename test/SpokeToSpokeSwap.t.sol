@@ -1106,6 +1106,18 @@ contract SpokeToSpokeSwapTest is Test {
         );
     }
 
+    function test_s2s_hubPoolPaused_skipsEveryVia() public {
+        _seedDefault();
+        vm.prank(pauser);
+        store.pausePool(0);
+
+        // Every hub asset is skipped, so the pause reads as a shortfall of the whole amount, not
+        // PoolPaused(0) (PROTOCOL.md, Swaps).
+        _expectS2sRevert(
+            _liq(address(usdg), uint256(0), uint256(100e6)), address(pyusd), address(usdg), address(usdc), 100e6
+        );
+    }
+
     function test_s2s_viaOffPeg_skipped() public {
         _seedDefault();
         usdcFeed.setAnswer(0.9e8);

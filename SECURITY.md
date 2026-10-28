@@ -207,9 +207,9 @@ What each pause blocks:
 | Pause | Blocks | Leaves open |
 |---|---|---|
 | Global (`pause`) | `deposit`, `swapOrQueue`, `swapExactInput`, `swapSpokeToSpoke`, `processQueue`; `getSwapQuote` returns 0 | `withdraw`, `cancelQueue` |
-| Per asset (`pauseDeposits`) | Deposits of the asset, swaps offering it, `swapSpokeToSpoke` routed through it, and `processQueue` on lines offering it | Swaps that pay the asset out, `withdraw`, `cancelQueue` |
+| Per asset (`pauseDeposits`) | Deposits of the asset, swaps offering it, `swapSpokeToSpoke` routed through it (the hub asset is skipped; if that leaves the swap short it reverts `InsufficientLiquidity`, not `DepositsPaused`), and `processQueue` on lines offering it | Swaps that pay the asset out, `withdraw`, `cancelQueue` |
 | Per pool (`pausePool`), spoke | Deposits into the spoke, every swap that touches it in either direction, and `processQueue` on its lines | `withdraw`, `cancelQueue` |
-| Per pool (`pausePool`), hub | Hub deposits, hub-asset deposits into spokes, swaps offering a hub asset, `swapSpokeToSpoke`, and `processQueue` on lines offering a hub asset | Spoke-to-hub `swapOrQueue` and `swapExactInput` (they pay hub assets out), `withdraw`, `cancelQueue` |
+| Per pool (`pausePool`), hub | Hub deposits, hub-asset deposits into spokes, swaps offering a hub asset, `swapSpokeToSpoke` (every hub asset is skipped, so it reverts `InsufficientLiquidity(wantAsset, 0, requestedAmountOut)`, not `PoolPaused`), and `processQueue` on lines offering a hub asset | Spoke-to-hub `swapOrQueue` and `swapExactInput` (they pay hub assets out), `withdraw`, `cancelQueue` |
 
 Example: a Chainlink feed is deprecated. A pauser pauses the affected asset
 immediately, the governor schedules `setPriceFeed`, and after the delay it is

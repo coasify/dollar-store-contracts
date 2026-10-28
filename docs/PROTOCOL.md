@@ -111,6 +111,8 @@ When both legs fill from reserves, the hub asset taken in the first leg pays the
 
 The offered asset is price-checked as an inflow. In a spoke-to-spoke swap each `via` is checked too, since the second leg moves it into hub reserves, and one that fails the check is skipped. The wanted asset is not.
 
+A skipped `via` does not report why it was skipped. If skipping leaves a spoke-to-spoke swap short, the call reverts `InsufficientLiquidity` like any other shortfall, and `fillableAmountOut` counts only what the remaining entries carried. So while the hub pool is paused, or a hub asset's deposits are paused, or its feed is stale, off peg or unreadable, a call through that hub asset alone, or through only such hub assets, reverts `InsufficientLiquidity(wantAsset, 0, requestedAmountOut)`. A smaller amount or another order of the same list fails the same way. A global pause, a paused spoke, and a failed check on the offered asset still revert with their own errors. Before treating the revert as a liquidity shortage, check each `via`: `isPoolPaused(0)`, `isDepositPaused(via)`, and its feed (from `AssetListed`, or the latest `PriceFeedUpdated`) against `maxStaleness()` and `pegTolerance()`. Pauses are also announced to integrators when they are made.
+
 ## Queues
 
 A **line** is the queue of positions waiting to swap one asset for another in one direction. Lines are keyed by offer asset, want asset, and pool: hub-to-hub lines belong to pool 0, and each spoke owns its own hub-to-spoke and spoke-to-hub lines. A spoke that is removed and later listed again therefore starts with empty lines; see [Spoke lifecycle](#spoke-lifecycle).
@@ -160,7 +162,7 @@ A spoke cannot be relisted while it is winding down, since its asset is still li
 
 If tokens leave the contract other than through the protocol, for instance an issuer seizing them, the books exceed the balance. Two governance tools reconcile them. Both only ever write balances down; neither moves value to anyone.
 
-- `syncReserves(poolId, asset)`, governor. Writes the pool's reserve of `asset` down to the balance minus queue escrow. Refuses to run if the balance is below the escrow alone.
+- `syncReserves(poolId, asset)`, governor. Writes the pool's reserve of `asset` down to the balance minus queue escrow. Refuses to run if the balance is below the escrow alone, and reverts `ReservesNotDrifted` if there is no loss to write down. Anyone can send tokens to the contract, so anyone can repair a small deficit after a sync is scheduled and make it revert. Schedule each `syncReserves` as its own timelock operation, never in a batch with other calls: a repaired asset's sync then fails on its own, with nothing left to do, and cannot roll back the write-down of another asset.
 - `haircutEscrow(asset, maxPositions)`, guardian, only while the asset's pool is paused. Reduces every position offering `asset`, across every pool that ever listed it and the parked line, by the same ratio so that escrow fits the balance minus reserves. Positions reduced to zero are removed. Reverts if more than `maxPositions` positions would be visited.
 
 Which tool runs first decides whether reserves or queued positions absorb the loss. That is a governance decision and is not constrained by the contract.
@@ -264,14 +266,20 @@ Then:
 | `DeadlineExpired` | The transaction landed after `deadline` | Simulate again and resend |
 | `ZeroAmount` | The amount is below one 6-decimal unit, or an exit is worth less than one unit | Send more |
 | `MinAmountNotMet(wantAsset, amountOut, minAmountOut)` | The swap would deliver `amountOut`, below the minimum | Simulate again; the state moved |
-| `InsufficientLiquidity(wantAsset, fillableAmountOut, requestedAmountOut)` | An all-or-nothing swap can deliver only `fillableAmountOut` now | Swap a smaller amount, try another `via` order, or let the user queue with `swapOrQueue` |
+| `InsufficientLiquidity(wantAsset, fillableAmountOut, requestedAmountOut)` | An all-or-nothing swap can deliver only `fillableAmountOut` now. On `swapSpokeToSpoke` it can also mean hub assets in `via` were skipped because the hub is paused, their deposits are paused or their price check failed; with every `via` skipped, `fillableAmountOut` is 0 (see [Swaps](#swaps)) | Check the `via` hub assets first; if they are healthy, swap a smaller amount, try another `via` order, or let the user queue with `swapOrQueue` |
 | `OrderTooSmall`, `QueueFull` | The remainder `swapOrQueue` would queue is below the line's minimum, or the line is full; the whole swap reverts | Swap only what fills now, or use `swapExactInput` |
 | `InvalidRecipient` | The recipient or receiver is the zero address or DollarStore | Pass the user's address |
 | `MinAmountsLength`, `WithdrawMinNotMet` | The minimums list does not match the exit's assets, or an asset pays less than its minimum | Build the list from `previewWithdraw` again |
-| `InsufficientReceiptShares` | More DLRS or shares than the caller holds | Withdraw less |
+| `InsufficientReceiptShares(requested, available)` | A spoke exit of more shares than the caller holds | Withdraw less |
+| `ERC20InsufficientBalance(caller, balance, needed)`, from the DLRS token | A hub exit of more DLRS than the caller holds. The exit burns the DLRS first, so the token reverts, not DollarStore. `previewWithdraw` checks only the total supply, so it does not catch this | Withdraw less |
 | `InsufficientReserves` | The hub cannot cover the payout, usually after a loss | See [Loss events](#loss-events) |
 | `ExitBlockedByIssuer(asset, wallet)` | An issuer refuses even a zero transfer to `wallet` | Nothing the caller can change; see [Issuer freezes](#issuer-freezes) |
 | `PriceOutOfBounds`, `PriceStale`, `StaleRound`, `InvalidPrice` | The price check on the asset coming in failed | Try later or with another asset |
+| `AssetNotListed(asset)` | The asset is not listed, or was removed | Use a listed asset (`isAssetListed`) |
+| `WrongPool(asset, poolId)` | A spoke asset deposited into the hub or into another spoke | Deposit it into its own spoke, `assetPoolId(asset)`. Hub assets can go into the hub or any spoke |
+| `LaunchCapExceeded(poolId, attempted, cap)` | The deposit would take the pool above its launch cap. `attempted` and `cap` are 6-decimal: DLRS supply for the hub, the spoke's reserve plus its hub claim for a spoke | Deposit at most `cap` minus what the pool already holds, or another pool |
+| `PoolFullyImpaired` | A deposit into a spoke whose shares are outstanding but whose value is zero | Nothing the caller can change |
+| `FeeOnTransferNotSupported(asset)` | The contract received less than the amount pulled: the token charged a fee | Nothing the caller can change |
 | `EnforcedPause`, `PoolPaused`, `DepositsPaused`, `SpokeWindingDown` | Swaps or deposits are paused, or the spoke takes no new money | Try later; exits stay open |
 | An error from the token itself | A transfer failed: no approval or balance, or a frozen caller or recipient | Fix the approval or balance, or use another recipient |
 
