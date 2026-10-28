@@ -22,15 +22,13 @@ implementation that links to it, so it is a release as well.
 
 ## Which number
 
-Versions follow semantic versioning. Before 1.0:
+Versions follow semantic versioning, starting at `1.0.0`, the first mainnet release:
 
 | Change since the last release | Bump | Example |
 |---|---|---|
-| New function, event or error, or any change in behavior or storage | Minor | `0.11.0` → `0.12.0` |
-| Fixes only, with no change to the external interface | Patch | `0.11.0` → `0.11.1` |
-
-`1.0.0` is the first mainnet release. After it, a change that breaks integrators (a removed or
-changed function, event or error) bumps the major number.
+| A change that breaks integrators: a removed or changed function, event or error | Major | `1.0.0` → `2.0.0` |
+| A new function, event or error, or any other change in behavior or storage | Minor | `1.0.0` → `1.1.0` |
+| Fixes only, with no change to the external interface | Patch | `1.0.0` → `1.0.1` |
 
 Use plain `MAJOR.MINOR.PATCH`, with no suffixes.
 
@@ -48,5 +46,4 @@ Use plain `MAJOR.MINOR.PATCH`, with no suffixes.
 
 | Version | Contents | Deployed |
 |---|---|---|
-| `0.11.0` | Spoke-to-spoke swaps (`swapSpokeToSpoke`), `getSwapQuote` matching the swap's fill, proportional exits, pool-scoped queue keys, parking. Pausing and unpausing as their own roles (pausers, unpauser). Dependencies pinned as submodules. | Not yet |
-| `0.10.0` | Pre-release integration build: proportional exits, pool-scoped queue keys and parking. No spoke-to-spoke swaps, and `getSwapQuote` returns 0 whenever a same-direction position is waiting. | Sepolia, block 11823702 |
+| `1.0.0` | The first mainnet release of DollarStore. Fully audited by Guardian, building on earlier audits by OpenZeppelin. | Not yet |
