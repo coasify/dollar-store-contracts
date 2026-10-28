@@ -4,14 +4,13 @@ pragma solidity 0.8.24;
 /// @title CoreStorage - ERC-7201 namespaced storage for the DollarStore core module
 /// @notice Holds the governance/upgrade roles and the DLRS token address.
 /// @dev Uses the ERC-7201 namespaced storage pattern to keep the storage layout stable
-///      across UUPS upgrades and to avoid collisions with future modules
-///      (hub, queue, spoke namespaces are reserved for later milestones).
+///      across UUPS upgrades and to avoid collisions with the registry and queue namespaces.
 /// @custom:security-contact admin@dollarstore.world
 library CoreStorage {
     /// @custom:storage-location erc7201:dollarstore.storage.core
     struct Layout {
         /// @notice The governor address: controls risk params, the registry and caps.
-        ///         Does NOT hold upgrade authority (that is the upgrader, since M8).
+        ///         Does NOT hold upgrade authority (that is the upgrader).
         ///         Expected to be a TimelockController (short delay) in production.
         address governor;
         /// @notice The guardian address: tightens launch caps and haircuts escrow after a loss.
@@ -24,16 +23,16 @@ library CoreStorage {
         /// @notice Address of the DLRS receipt token, deployed at initialize() time.
         ///         Set once during initialize and never changed.
         address dlrs;
-        /// @notice Peg tolerance in basis points for the depeg check (e.g., 50 = 0.5%). (M5)
+        /// @notice Peg tolerance in basis points for the depeg check (e.g., 50 = 0.5%).
         ///         Appended after v0.1 fields; safe because this is a fixed-slot namespaced struct.
         uint256 pegTolerance;
-        /// @notice Max age (seconds) of a price feed answer before it is considered stale. (M5)
+        /// @notice Max age (seconds) of a price feed answer before it is considered stale.
         uint256 maxStaleness;
-        /// @notice The upgrader address: holds UUPS upgrade authority (_authorizeUpgrade). (M8)
+        /// @notice The upgrader address: holds UUPS upgrade authority (_authorizeUpgrade).
         ///         Separated from the governor so a governor compromise cannot replace the code.
         ///         Expected to be a TimelockController (longest delay) in production.
         address upgrader;
-        /// @notice Pending upgrader for the two-step upgrader transfer. (M8)
+        /// @notice Pending upgrader for the two-step upgrader transfer.
         address pendingUpgrader;
         /// @notice The unpauser address: lifts pauses and sets who may pause. It cannot pause.
         ///         Expected to be a multi-sig with a higher quorum than any single pauser.

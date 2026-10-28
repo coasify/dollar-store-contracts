@@ -10,6 +10,7 @@ import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Exits} from "./utils/Exits.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
 /// @dev Freezable token that short-circuits zero-value transfers BEFORE its freeze check: the probe
@@ -99,7 +100,7 @@ contract ExitIssuerProbeTest is Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usds), address(feed));
-        spoke = store.createSpoke(address(pyusd), address(feed), 0);
+        spoke = store.createSpoke(address(pyusd), address(feed), 0, 0);
         vm.stopPrank();
 
         address[3] memory who = [alice, bob, trader];
@@ -118,11 +119,11 @@ contract ExitIssuerProbeTest is Test {
     /// @dev Alice LPs 100 PYUSD; Bob funds 500 USDC; a trader buys ALL the PYUSD. Pool: 0 PYUSD, 600 claim.
     function _buyOutTheSpoke() internal {
         vm.prank(alice);
-        store.deposit(spoke, address(pyusd), 100e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 100e6, alice, block.timestamp);
         vm.prank(bob);
-        store.deposit(spoke, address(usdc), 500e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 500e6, bob, block.timestamp);
         vm.prank(trader);
-        store.swapExactInput(address(usdc), address(pyusd), 100e6, 0, block.timestamp);
+        store.swapExactInput(address(usdc), address(pyusd), 100e6, 0, trader, block.timestamp);
         assertEq(store.getReserve(spoke, address(pyusd)), 0, "spoke fully bought out");
         assertEq(store.getDlrsReserve(spoke), 600e6);
     }
@@ -137,17 +138,17 @@ contract ExitIssuerProbeTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.ExitBlockedByIssuer.selector, address(pyusd), alice));
-        store.withdraw(spoke, 100e6, block.timestamp);
+        store.withdraw(spoke, 100e6, new uint256[](0), block.timestamp);
 
         // Bob, not frozen, exits the same pool normally.
         vm.prank(bob);
-        (, uint256 hubUnits) = store.withdraw(spoke, 500e6, block.timestamp);
+        (, uint256 hubUnits) = Exits.withdraw(store, spoke, 500e6);
         assertEq(hubUnits, 500e6);
 
         // Once Paxos unfreezes her, Alice exits too.
         pyusd.setBlocked(alice, false);
         vm.prank(alice);
-        (, hubUnits) = store.withdraw(spoke, 100e6, block.timestamp);
+        (, hubUnits) = Exits.withdraw(store, spoke, 100e6);
         assertEq(hubUnits, 100e6);
     }
 
@@ -155,29 +156,29 @@ contract ExitIssuerProbeTest is Test {
     ///         so her slice is 100% PYUSD and no USDC would move. The USDC probe gives Circle its say.
     function test_spokeExit_frozenOnHubAsset_poolHoldsNoHubDollars_reverts() public {
         vm.prank(alice);
-        store.deposit(spoke, address(usdc), 100e6, block.timestamp); // claim 100
+        store.deposit(spoke, address(usdc), 100e6, alice, block.timestamp); // claim 100
         vm.prank(trader);
-        store.swapExactInput(address(pyusd), address(usdc), 100e6, 0, block.timestamp); // spends the claim
+        store.swapExactInput(address(pyusd), address(usdc), 100e6, 0, trader, block.timestamp); // spends the claim
         assertEq(store.getDlrsReserve(spoke), 0);
         assertEq(store.getReserve(spoke, address(pyusd)), 100e6);
 
         usdc.setBlocked(alice, true);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.ExitBlockedByIssuer.selector, address(usdc), alice));
-        store.withdraw(spoke, 100e6, block.timestamp);
+        store.withdraw(spoke, 100e6, new uint256[](0), block.timestamp);
     }
 
     /// @notice Mixed pool: both legs pay, so both real transfers run and the frozen one reverts on its own.
     ///         No probe is needed and the outcome is the same: no exit.
     function test_spokeExit_mixedPool_frozenLegRevertsOnItsOwn() public {
         vm.prank(alice);
-        store.deposit(spoke, address(pyusd), 100e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 100e6, alice, block.timestamp);
         vm.prank(bob);
-        store.deposit(spoke, address(usdc), 100e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 100e6, bob, block.timestamp);
         pyusd.setBlocked(alice, true);
         vm.prank(alice);
         vm.expectRevert(); // MockBlacklistERC20: "blocked" on the real PYUSD transfer
-        store.withdraw(spoke, 100e6, block.timestamp);
+        store.withdraw(spoke, 100e6, new uint256[](0), block.timestamp);
     }
 
     // ============ Hub exits ============
@@ -186,29 +187,29 @@ contract ExitIssuerProbeTest is Test {
     ///         proportional payout would be 100% USDS with no USDC transfer. The USDC probe blocks it.
     function test_hubExit_frozenOnUsdc_hubHoldsOnlyUsds_reverts() public {
         vm.prank(alice);
-        store.deposit(0, address(usds), 1_000e18, block.timestamp); // only USDS in the hub
+        store.deposit(0, address(usds), 1_000e18, alice, block.timestamp); // only USDS in the hub
         usdc.setBlocked(alice, true);
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.ExitBlockedByIssuer.selector, address(usdc), alice));
-        store.withdraw(0, 1_000e6, block.timestamp);
+        store.withdraw(0, 1_000e6, new uint256[](0), block.timestamp);
 
         usdc.setBlocked(alice, false);
         vm.prank(alice);
-        (, uint256 hubUnits) = store.withdraw(0, 1_000e6, block.timestamp);
+        (, uint256 hubUnits) = Exits.withdraw(store, 0, 1_000e6);
         assertEq(hubUnits, 1_000e6);
     }
 
     /// @notice Hub holds both assets: the frozen leg is a real transfer and reverts on its own.
     function test_hubExit_mixedHub_frozenLegRevertsOnItsOwn() public {
         vm.prank(alice);
-        store.deposit(0, address(usdc), 500e6, block.timestamp);
+        store.deposit(0, address(usdc), 500e6, alice, block.timestamp);
         vm.prank(bob);
-        store.deposit(0, address(usds), 500e18, block.timestamp);
+        store.deposit(0, address(usds), 500e18, bob, block.timestamp);
         usdc.setBlocked(alice, true);
         vm.prank(alice);
         vm.expectRevert();
-        store.withdraw(0, 100e6, block.timestamp);
+        store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
     }
 
     // ============ The probe is harmless for everyone else ============
@@ -218,7 +219,7 @@ contract ExitIssuerProbeTest is Test {
         uint256 storePyusdBefore = pyusd.balanceOf(address(store));
         uint256 alicePyusdBefore = pyusd.balanceOf(alice);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(spoke, 100e6, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = Exits.withdraw(store, spoke, 100e6);
         assertEq(spokeUnits, 0);
         assertEq(hubUnits, 100e6);
         // The zero-value probe moved nothing.
@@ -232,18 +233,18 @@ contract ExitIssuerProbeTest is Test {
     ///         is paid in its own native decimals from the same 6dp unit accounting.
     function test_spokeExit_mixedDecimals_paysEachLegInNativeUnits() public {
         vm.prank(alice);
-        store.deposit(spoke, address(pyusd), 300e6, block.timestamp); // 300 PYUSD, 300 shares
+        store.deposit(spoke, address(pyusd), 300e6, alice, block.timestamp); // 300 PYUSD, 300 shares
         vm.prank(bob);
-        store.deposit(spoke, address(usdc), 100e6, block.timestamp); // claim 100, hub USDC 100
+        store.deposit(spoke, address(usdc), 100e6, bob, block.timestamp); // claim 100, hub USDC 100
         vm.prank(bob);
-        store.deposit(spoke, address(usds), 200e18, block.timestamp); // claim 300, hub USDS 200
+        store.deposit(spoke, address(usds), 200e18, bob, block.timestamp); // claim 300, hub USDS 200
         // Pool value 600, shares 600. Alice holds 300 shares = 50% of each side.
 
         uint256 pyBefore = pyusd.balanceOf(alice);
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 usdsBefore = usds.balanceOf(alice);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 hubUnits) = store.withdraw(spoke, 300e6, block.timestamp);
+        (uint256 spokeUnits, uint256 hubUnits) = Exits.withdraw(store, spoke, 300e6);
 
         assertEq(spokeUnits, 150e6, "half the PYUSD side, 6dp units");
         assertEq(hubUnits, 150e6, "half the claim, 6dp units");
@@ -265,11 +266,11 @@ contract ExitIssuerProbeTest is Test {
         vm.prank(governor);
         store.addHubAsset(address(sc), address(feed)); // listed, but the hub never holds any
         vm.prank(alice);
-        store.deposit(0, address(usds), 100e18, block.timestamp); // hub: USDS only
+        store.deposit(0, address(usds), 100e18, alice, block.timestamp); // hub: USDS only
         sc.setBlocked(alice, true); // sc's issuer froze her, but sc's zero-transfer skips that check
 
         vm.prank(alice);
-        (, uint256 hubUnits) = store.withdraw(0, 100e6, block.timestamp); // succeeds: the probe saw nothing
+        (, uint256 hubUnits) = Exits.withdraw(store, 0, 100e6); // succeeds: the probe saw nothing
         assertEq(hubUnits, 100e6, "exit went through in USDS despite the sc freeze");
     }
 
@@ -280,17 +281,17 @@ contract ExitIssuerProbeTest is Test {
         vm.prank(governor);
         store.addHubAsset(address(rz), address(feed));
         vm.prank(alice);
-        store.deposit(0, address(usds), 100e18, block.timestamp); // hub holds only USDS; rz leg is zero
+        store.deposit(0, address(usds), 100e18, alice, block.timestamp); // hub holds only USDS; rz leg is zero
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.ExitBlockedByIssuer.selector, address(rz), alice));
-        store.withdraw(0, 100e6, block.timestamp);
+        store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
 
         vm.prank(governor);
         store.setProbeExempt(address(rz), true);
         assertTrue(store.isProbeExempt(address(rz)));
         vm.prank(alice);
-        (, uint256 hubUnits) = store.withdraw(0, 100e6, block.timestamp);
+        (, uint256 hubUnits) = Exits.withdraw(store, 0, 100e6);
         assertEq(hubUnits, 100e6);
     }
 
@@ -304,6 +305,8 @@ contract ExitIssuerProbeTest is Test {
     }
 
     /// @notice Exit gas grows with the number of hub assets (one probe per zero leg). Pinned as a bound.
+    ///         The bound leaves room for the coverage build, which compiles with minimal optimization:
+    ///         this exit uses about 260,000 gas in a normal build and about 410,000 under coverage.
     function test_exitGas_withManyHubAssets_staysBounded() public {
         for (uint256 i; i < 6; i++) {
             MockBlacklistERC20 t = new MockBlacklistERC20("X", "X", 6);
@@ -311,11 +314,11 @@ contract ExitIssuerProbeTest is Test {
             store.addHubAsset(address(t), address(feed));
         }
         vm.prank(alice);
-        store.deposit(0, address(usds), 100e18, block.timestamp); // 8 hub assets, only USDS funded
+        store.deposit(0, address(usds), 100e18, alice, block.timestamp); // 8 hub assets, only USDS funded
         vm.prank(alice);
         uint256 g = gasleft();
-        store.withdraw(0, 100e6, block.timestamp);
+        store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
         uint256 used = g - gasleft();
-        assertLt(used, 400_000, "7 probes + 1 payout under 400k gas");
+        assertLt(used, 450_000, "7 probes + 1 payout under 450k gas");
     }
 }

@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
-/// @title SpokeShareLib - Pro-rata share math for non-transferable spoke LP receipts (U2)
+/// @title SpokeShareLib - Pro-rata share math for non-transferable spoke LP receipts
 /// @notice A spoke is a two-component pool: its spoke-asset reserve plus an internal DLRS-side
 ///         reserve (`dlrsReserve`). Both are normalized 6-decimal, par-valued dollar amounts, so the
 ///         pool's total value is the scalar `poolValue = spokeReserve + dlrsReserve`. LP receipts are

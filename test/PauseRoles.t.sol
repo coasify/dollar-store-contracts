@@ -323,7 +323,7 @@ contract PauseRolesTest is Test {
         usdc.mint(alice, 200e6);
         vm.startPrank(alice);
         usdc.approve(address(store), 200e6);
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
 
         vm.prank(pauserA);
@@ -353,19 +353,19 @@ contract PauseRolesTest is Test {
         // With every pause lifted the same deposit goes through, so the pauses were what stopped it.
         _unpauseAll();
         vm.prank(alice);
-        store.deposit(0, address(usdc), 1e6, block.timestamp);
+        store.deposit(0, address(usdc), 1e6, alice, block.timestamp);
     }
 
     function _depositReverts(bytes memory reason) internal {
         vm.prank(alice);
         vm.expectRevert(reason);
-        store.deposit(0, address(usdc), 1e6, block.timestamp);
+        store.deposit(0, address(usdc), 1e6, alice, block.timestamp);
     }
 
     function _withdraws(uint256 units) internal {
         uint256 before = usdc.balanceOf(alice);
         vm.prank(alice);
-        store.withdraw(0, units, block.timestamp);
+        store.withdraw(0, units, new uint256[](0), block.timestamp);
         assertEq(usdc.balanceOf(alice) - before, units, "exit paid in full while paused");
     }
 
@@ -433,7 +433,7 @@ contract PauseRolesTest is Test {
         usdt.mint(bob, 1_500e6);
         vm.startPrank(bob);
         usdt.approve(address(store), 1_500e6);
-        store.deposit(0, address(usdt), 1_500e6, block.timestamp);
+        store.deposit(0, address(usdt), 1_500e6, bob, block.timestamp);
         vm.stopPrank();
 
         vm.prank(pauserA);
@@ -463,7 +463,7 @@ contract PauseRolesTest is Test {
         usdc.mint(who, amount);
         vm.startPrank(who);
         usdc.approve(address(store), amount);
-        store.swap(address(usdc), address(want), amount, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(want), amount, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -471,7 +471,7 @@ contract PauseRolesTest is Test {
     function test_unpausingWindingDownSpoke_doesNotReopenDeposits() public {
         MockERC20 rlusd = new MockERC20("Ripple USD", "RLUSD", 18);
         vm.startPrank(governor);
-        uint16 spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         store.windDownSpoke(spoke);
         vm.stopPrank();
 
@@ -485,7 +485,7 @@ contract PauseRolesTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.deposit(spoke, address(rlusd), 1e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1e18, alice, block.timestamp);
         vm.stopPrank();
     }
 

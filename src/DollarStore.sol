@@ -24,10 +24,10 @@ import {SwapRouteLib} from "./libraries/SwapRouteLib.sol";
 import {PegLib} from "./libraries/PegLib.sol";
 import {DLRS} from "./DLRS.sol";
 
-/// @title DollarStore - Upgradeable (UUPS) base + governance skeleton (Milestone M1)
-/// @notice Establishes the upgradeable core: ERC-7201 namespaced storage, two-step
-///         governor/guardian roles, pause/unpause, and governor-gated UUPS upgrades.
-/// @dev Swap/queue/reserve logic is added in later milestones. This is the M1 foundation.
+/// @title DollarStore - Upgradeable (UUPS) stablecoin swap store with a hub pool and spoke pools
+/// @notice Upgrades are authorized by the upgrader. Pausing is done by the pausers and lifting a pause
+///         by the unpauser. The governor lists assets and sets parameters; the guardian lowers launch
+///         caps and haircuts impaired escrow.
 /// @dev Storage is held in CoreStorage's ERC-7201 namespaced slot, NOT in contract state
 ///      variables, so the layout is stable across upgrades.
 /// @custom:security-contact admin@dollarstore.world
@@ -53,7 +53,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      a value anything runs with, so it is set with margin: some feeds run on a 48h heartbeat, and
     ///      a ceiling below what a listed feed needs bricks swaps and takes an upgrade to lift, while a
     ///      generous one only matters if a governor action is wrong, which is timelocked and cancellable
-    ///      by the guardian.
+    ///      by the veto Safe.
     uint256 private constant MAX_STALENESS = 3 days;
 
     // Routing types (RouteKind / Route) and the directed-swap engine live in SwapRouteLib (linked,
@@ -95,7 +95,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @dev Restricts to the current upgrader (read from namespaced core storage). The upgrader
-    ///      holds UUPS upgrade authority and is kept separate from the governor (M8).
+    ///      holds UUPS upgrade authority and is kept separate from the governor.
     modifier onlyUpgrader() {
         if (msg.sender != CoreStorage.layout().upgrader) revert OnlyUpgrader();
         _;
@@ -304,13 +304,13 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         emit PauserSet(account, allowed);
     }
 
-    // ============ Asset Registry (M2) ============
+    // ============ Asset Registry ============
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated. Reads and freezes the token's decimals, computes the scaling factor
     ///      (reverts if decimals are outside [6, 18]), requires a price feed, and lists the asset
-    ///      into the hub (poolId 0). Reserves remain zero until deposits land in M3.
-    function addHubAsset(address asset, address priceFeed) external override onlyGovernor {
+    ///      into the hub (poolId 0).
+    function addHubAsset(address asset, address priceFeed) external override nonReentrant onlyGovernor {
         if (asset == address(0) || priceFeed == address(0)) revert ZeroAddress();
         // Feed decimals must be <= 18: PegLib.checkPeg scales by 10**(18 - feedDecimals), which would
         // underflow (and DoS every inflow of this asset) for a feed with more than 18 decimals.
@@ -333,30 +333,31 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
             scalingFactor: sf,
             priceFeed: priceFeed,
             listed: true,
-            depositPaused: false,
-            probeExempt: false
+            depositPaused: r.assetConfig[asset].depositPaused,
+            probeExempt: r.assetConfig[asset].probeExempt
         });
         r.pools[0].assets.push(asset);
 
         emit AssetListed(asset, 0, dec, priceFeed);
     }
 
-    // ============ Spoke Lifecycle (U2) ============
+    // ============ Spoke Lifecycle ============
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated. Mirrors addHubAsset's listing guards but creates a NEW spoke pool
     ///      (poolId >= 1) and registers the asset into it. Ownership is enforced by the `listed`
     ///      flag: an already-listed asset (hub or another spoke) cannot be re-listed, so an asset
     ///      belongs to exactly one pool.
-    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve_)
+    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve_, uint256 launchCap)
         external
         override
+        nonReentrant
         onlyGovernor
         returns (uint16 poolId)
     {
         // Cold path: delegated to SpokeAdminLib (runs in this proxy's storage) to keep DollarStore
         // under the EIP-170 runtime size limit.
-        return SpokeAdminLib.createSpoke(spokeAsset, priceFeed, minDlrsReserve_);
+        return SpokeAdminLib.createSpoke(spokeAsset, priceFeed, minDlrsReserve_, launchCap);
     }
 
     /// @inheritdoc IDollarStore
@@ -377,7 +378,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      owners. Kills the pool by pausing it and unlisting its assets; the poolId is retired but the
     ///      pool stays as a tombstone in the array so later poolIds never shift. Body lives in
     ///      SpokeLifecycleLib to keep this implementation under the EIP-170 limit.
-    function removePool(uint16 poolId) external override onlyGovernor {
+    function removePool(uint16 poolId) external override nonReentrant onlyGovernor {
         SpokeLifecycleLib.removePool(poolId);
     }
 
@@ -385,7 +386,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Governor-gated, spoke-only. Enters the winding-down state: `_validateRoute` then blocks
     ///      risk-increasing spoke->hub trades and `deposit` blocks new spoke liquidity, while LP exits,
     ///      cancellations, and risk-reducing hub->spoke trades stay live. Body in SpokeLifecycleLib.
-    function windDownSpoke(uint16 poolId) external override onlyGovernor {
+    function windDownSpoke(uint16 poolId) external override nonReentrant onlyGovernor {
         SpokeLifecycleLib.windDownSpoke(poolId);
     }
 
@@ -494,57 +495,60 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         }
     }
 
-    // ============ Hub Deposit / Withdraw (M3) ============
+    // ============ Hub Deposit / Withdraw ============
 
     /// @inheritdoc IDollarStore
     /// @dev Routes to the hub (poolId 0, mints DLRS 1:1) or a spoke (poolId >= 1). A spoke deposit is
     ///      either the spoke's own asset (enters the spoke reserve) or a hub asset that funds the
     ///      spoke's dlrsReserve; both mint pro-rata receipt shares. New exposure is gated by global
-    ///      pause + reentrancy guard. Pulls only `nativePulled` (= units * scalingFactor); sub-unit
-    ///      dust stays with the user. A before/after balance check rejects fee-on-transfer tokens.
-    /// @return receiptUnits For a HUB deposit, the DLRS minted (normalized 6dp). For a SPOKE deposit,
-    ///         the non-transferable receipt shares credited to the LP.
-    function deposit(uint16 poolId, address asset, uint256 amount, uint256 deadline)
+    ///      pause + reentrancy guard. Pulls only `amountIn` (= units * scalingFactor) from the caller;
+    ///      sub-unit dust stays with the caller. A before/after balance check rejects fee-on-transfer
+    ///      tokens. The DLRS or receipt shares are credited to `receiver`.
+    function deposit(uint16 poolId, address asset, uint256 amount, address receiver, uint256 deadline)
         external
         override
         nonReentrant
         whenNotPaused
-        returns (uint256 receiptUnits)
+        returns (uint256 amountIn, uint256 receiptAmount)
     {
         if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
+        if (receiver == address(0) || receiver == address(this)) revert InvalidRecipient(receiver);
 
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.AssetConfig memory cfg = r.assetConfig[asset];
         if (!cfg.listed) revert AssetNotListed(asset);
 
         if (poolId == 0) {
-            // Hub deposit: asset must be a hub asset; mints DLRS 1:1 (M3).
+            // Hub deposit: asset must be a hub asset; mints DLRS 1:1.
             if (cfg.poolId != 0) revert WrongPool(asset, poolId);
-            return _depositHub(r, asset, cfg.scalingFactor, amount);
+            return _depositHub(r, asset, cfg.scalingFactor, amount, receiver);
         }
 
-        // Spoke deposit (U2). The pool must be a live, active spoke (no new liquidity once winding down).
+        // Spoke deposit. The pool must be a live, active spoke (no new liquidity once winding down).
         RegistryStorage.Pool storage p = _spokePool(poolId);
         if (p.paused) revert PoolPaused(poolId);
         if (p.status != RegistryStorage.PoolStatus.Active) revert SpokeWindingDown(poolId);
         if (cfg.poolId == poolId) {
             // The spoke's own asset enters that spoke's active reserve.
-            return _depositSpokeAsset(r, p, poolId, asset, cfg.scalingFactor, amount);
+            return _depositSpokeAsset(r, p, poolId, asset, cfg.scalingFactor, amount, receiver);
         }
         if (cfg.poolId == 0) {
             // A hub asset funds the spoke's DLRS side (enters hub reserves, credits dlrsReserve).
-            return _depositSpokeFunding(r, p, poolId, asset, cfg.scalingFactor, amount);
+            return _depositSpokeFunding(r, p, poolId, asset, cfg.scalingFactor, amount, receiver);
         }
         revert WrongPool(asset, poolId); // asset belongs to a different spoke
     }
 
-    /// @dev Hub deposit: pull the hub asset into hub reserves and mint DLRS 1:1 to the depositor.
-    function _depositHub(RegistryStorage.Layout storage r, address asset, uint64 scaling, uint256 amount)
-        internal
-        returns (uint256 units)
-    {
+    /// @dev Hub deposit: pull the hub asset from the caller into hub reserves and mint DLRS 1:1 to
+    ///      `receiver`.
+    function _depositHub(
+        RegistryStorage.Layout storage r,
+        address asset,
+        uint64 scaling,
+        uint256 amount,
+        address receiver
+    ) internal returns (uint256 nativePulled, uint256 units) {
         PegLib.checkInflow(asset); // per-asset/hub-pool deposit pause + oracle peg check
-        uint256 nativePulled;
         (units, nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
@@ -552,23 +556,25 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         _pullExact(asset, nativePulled); // rejects fee-on-transfer
 
         r.reserves[0][asset] += units;
-        DLRS(CoreStorage.layout().dlrs).mint(msg.sender, units);
+        DLRS(CoreStorage.layout().dlrs).mint(receiver, units);
 
-        emit Deposit(msg.sender, 0, asset, nativePulled, units);
+        emit Deposit(receiver, 0, asset, msg.sender, nativePulled, units);
     }
 
     /// @dev Spoke-asset LP: the spoke asset enters that spoke's active reserve and mints receipt shares
-    ///      pro-rata against the pool value (spokeReserve + dlrsReserve). No DLRS is minted.
+    ///      to `receiver` pro-rata against the pool value (spokeReserve + dlrsReserve). No DLRS is minted.
     function _depositSpokeAsset(
         RegistryStorage.Layout storage r,
         RegistryStorage.Pool storage p,
         uint16 poolId,
         address asset,
         uint64 scaling,
-        uint256 amount
-    ) internal returns (uint256 shares) {
+        uint256 amount,
+        address receiver
+    ) internal returns (uint256 nativePulled, uint256 shares) {
         PegLib.checkInflow(asset); // spoke asset: deposit pause + spoke-pool pause + peg
-        (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, scaling);
+        uint256 units;
+        (units, nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
         uint256 poolValueBefore = r.reserves[poolId][asset] + p.dlrsReserve;
@@ -578,28 +584,30 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         _pullExact(asset, nativePulled);
 
         r.reserves[poolId][asset] += units;
-        r.receiptShares[poolId][msg.sender] += shares;
+        r.receiptShares[poolId][receiver] += shares;
         r.receiptTotalShares[poolId] += shares;
 
-        emit SpokeLiquidityAdded(poolId, msg.sender, asset, nativePulled, units, shares);
+        emit SpokeLiquidityAdded(poolId, receiver, asset, msg.sender, nativePulled, units, shares);
 
         // The new spoke reserve can now settle waiting hub->spoke demand (hubAsset -> this spoke asset).
         _triggerSpokeQueues(asset, true);
     }
 
     /// @dev Hub-asset LP into a spoke: the hub asset enters HUB reserves and credits the spoke's
-    ///      internal `dlrsReserve` (streamlined, no wallet DLRS round-trip), minting receipt shares
-    ///      pro-rata. Hub-reserve backing and dlrsReserve grow together, preserving DLRS conservation.
+    ///      internal `dlrsReserve` (streamlined, no wallet DLRS round-trip), minting receipt shares to
+    ///      `receiver` pro-rata. Hub-reserve backing and dlrsReserve grow together, preserving DLRS conservation.
     function _depositSpokeFunding(
         RegistryStorage.Layout storage r,
         RegistryStorage.Pool storage p,
         uint16 poolId,
         address hubAsset,
         uint64 scaling,
-        uint256 amount
-    ) internal returns (uint256 shares) {
+        uint256 amount,
+        address receiver
+    ) internal returns (uint256 nativePulled, uint256 shares) {
         PegLib.checkInflow(hubAsset); // hub asset: deposit pause + hub-pool pause + peg
-        (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, scaling);
+        uint256 units;
+        (units, nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
         address spokeAsset = p.assets[0]; // a spoke has exactly one spoke asset
@@ -611,10 +619,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
         r.reserves[0][hubAsset] += units; // hub asset backs the new DLRS-side liquidity
         p.dlrsReserve += units; // credit the spoke's DLRS side (no wallet DLRS minted)
-        r.receiptShares[poolId][msg.sender] += shares;
+        r.receiptShares[poolId][receiver] += shares;
         r.receiptTotalShares[poolId] += shares;
 
-        emit SpokeLiquidityAdded(poolId, msg.sender, hubAsset, nativePulled, units, shares);
+        emit SpokeLiquidityAdded(poolId, receiver, hubAsset, msg.sender, nativePulled, units, shares);
 
         // The new DLRS side can now settle waiting spoke->hub demand (this spoke asset -> hubAsset).
         _triggerSpokeQueues(spokeAsset, false);
@@ -634,38 +642,44 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @inheritdoc IDollarStore
     /// @dev Exit path: NOT blocked by pause (only by the reentrancy guard). An exit can still fail if a
     ///      pool asset will not transfer to the caller, or after a governance write-down.
-    ///      Proportional: the caller receives their share of every asset the pool holds. Hub (poolId 0):
-    ///      `units` is DLRS to burn, paid across hub assets by reserve weight. Spoke (poolId >= 1):
-    ///      `units` is receipt shares to burn, paid across the spoke asset and the spoke's claim on hub
-    ///      dollars. Not gated by minDlrsReserve. Body in SpokeLifecycleLib (delegatecall, same storage,
-    ///      preserves msg.sender); the nonReentrant guard here holds for the whole delegated call.
-    function withdraw(uint16 poolId, uint256 units, uint256 deadline)
+    ///      Proportional: the caller receives their share of every asset the pool holds. Not gated by
+    ///      minDlrsReserve. Body in SpokeLifecycleLib (delegatecall, same storage, preserves
+    ///      msg.sender); the nonReentrant guard here holds for the whole delegated call.
+    function withdraw(uint16 poolId, uint256 receiptAmount, uint256[] calldata minAmountsOut, uint256 deadline)
         external
         override
         nonReentrant
-        returns (uint256 spokeUnits, uint256 hubUnits)
+        returns (address[] memory assets, uint256[] memory amounts)
     {
-        if (poolId == 0) return (0, SpokeLifecycleLib.withdrawHub(units, deadline));
-        return SpokeLifecycleLib.withdrawSpoke(poolId, units, deadline);
+        return SpokeLifecycleLib.withdraw(poolId, receiptAmount, minAmountsOut, deadline);
     }
 
-    // ============ Directed Swaps & Queues (M4) ============
+    /// @inheritdoc IDollarStore
+    function previewWithdraw(uint16 poolId, uint256 receiptAmount)
+        external
+        view
+        override
+        returns (address[] memory assets, uint256[] memory amounts)
+    {
+        return SpokeLifecycleLib.previewWithdraw(poolId, receiptAmount);
+    }
+
+    // ============ Directed Swaps & Queues ============
 
     /// @inheritdoc IDollarStore
     /// @dev Fill order: exact-opposite queue -> protocol reserves (only if the same-direction
     ///      queue is empty) -> queue the remainder. Hub-hub swaps are reserve-neutral (no DLRS
-    ///      mint/burn) — they move reserve value 1:1 between assets. tip must be 0 (reserved for U1).
-    function swap(
-        address offerAsset,
-        address wantAsset,
-        uint256 amount,
-        uint256 minAmountOut,
-        uint256 tip,
-        uint256 deadline
-    ) external override nonReentrant whenNotPaused returns (uint256 amountFilled, uint256 amountQueued) {
+    ///      mint/burn) — they move reserve value 1:1 between assets.
+    function swapOrQueue(address offerAsset, address wantAsset, uint256 amount, uint256 minAmountOut, uint256 deadline)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 amountIn, uint256 amountOut, uint256 amountInQueued, uint256 positionId)
+    {
         // Directed-swap engine lives in SwapRouteLib (delegatecall, same storage, preserves
         // msg.sender). The nonReentrant + whenNotPaused guards here hold for the whole delegated call.
-        return SwapRouteLib.swap(offerAsset, wantAsset, amount, minAmountOut, tip, deadline);
+        return SwapRouteLib.swapOrQueue(offerAsset, wantAsset, amount, minAmountOut, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -675,9 +689,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         address wantAsset,
         uint256 amount,
         uint256 minAmountOut,
+        address recipient,
         uint256 deadline
-    ) external override nonReentrant whenNotPaused returns (uint256 amountOut) {
-        return SwapRouteLib.swapExactInput(offerAsset, wantAsset, amount, minAmountOut, deadline);
+    ) external override nonReentrant whenNotPaused returns (uint256 amountIn, uint256 amountOut) {
+        return SwapRouteLib.swapExactInput(offerAsset, wantAsset, amount, minAmountOut, recipient, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -686,9 +701,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         address wantAsset,
         address[] calldata via,
         uint256 amount,
+        address recipient,
         uint256 deadline
-    ) external override nonReentrant whenNotPaused returns (uint256 amountOut) {
-        return SwapRouteLib.swapSpokeToSpoke(offerAsset, wantAsset, via, amount, deadline);
+    ) external override nonReentrant whenNotPaused returns (uint256 amountIn, uint256 amountOut) {
+        return SwapRouteLib.swapSpokeToSpoke(offerAsset, wantAsset, via, amount, recipient, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -798,12 +814,12 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     // The directed-swap fill / FIFO settle / enqueue / park / cancel machinery lives in
-    // SwapRouteLib (linked, delegatecall over the same ERC-7201 storage). swap / swapExactInput /
-    // processQueue / cancelQueue / _triggerSpokeQueues delegate into it. Kept out of this
+    // SwapRouteLib (linked, delegatecall over the same ERC-7201 storage). swapOrQueue / swapExactInput /
+    // swapSpokeToSpoke / processQueue / cancelQueue / _triggerSpokeQueues delegate into it. Kept out of this
     // implementation to fit under the EIP-170 24576-byte runtime limit (accepted delegatecall cost on
     // the swap path).
 
-    // ============ Risk Controls (M5) ============
+    // ============ Risk Controls ============
 
     /// @inheritdoc IDollarStore
     function setPriceFeed(address asset, address feed) external override onlyGovernor {
@@ -878,14 +894,14 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Escrow-aware: reserves sync down to (actualBalance - escrow). Only decreases.
-    function syncReserves(uint16 poolId, address asset) external override onlyGovernor {
+    function syncReserves(uint16 poolId, address asset) external override nonReentrant onlyGovernor {
         // Cold path: delegated to SpokeAdminLib to keep DollarStore under the EIP-170 runtime size limit.
         SpokeAdminLib.syncReserves(poolId, asset);
     }
 
     /// @inheritdoc IDollarStore
     /// @dev Sweeps only the excess above accounted: queue escrow always, plus reserves while listed.
-    function rescueTokens(address asset, address to) external override onlyGovernor {
+    function rescueTokens(address asset, address to) external override nonReentrant onlyGovernor {
         // Cold path: delegated to SpokeAdminLib to keep DollarStore under the EIP-170 runtime size limit.
         SpokeAdminLib.rescueTokens(asset, to);
     }
@@ -931,7 +947,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         return CoreStorage.layout().maxStaleness;
     }
 
-    // ============ Launch Caps (M6) ============
+    // ============ Launch Caps ============
 
     /// @inheritdoc IDollarStore
     function setLaunchCap(uint16 poolId, uint256 cap) external override onlyGovernor {
@@ -963,7 +979,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Enforce a pool's launch cap against its active exposure. cap == 0 means no cap. Queue
     ///      escrow is excluded from exposure (it is not active pool liquidity). For the hub (poolId 0),
     ///      exposure == total DLRS supply (backed 1:1 by hub reserves). For a spoke, exposure == that
-    ///      spoke's asset reserve + its dlrsReserve (U2).
+    ///      spoke's asset reserve + its dlrsReserve.
     function _checkLaunchCap(uint16 poolId, uint256 addedUnits) internal view {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (poolId >= r.pools.length) revert InvalidPool(poolId); // defense-in-depth (callers validate)
@@ -981,7 +997,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     // ============ UUPS Upgrade Authorization ============
 
-    /// @notice Authorize a UUPS upgrade. Upgrader-gated (separate from the governor, M8).
+    /// @notice Authorize a UUPS upgrade. Upgrader-gated (separate from the governor).
     /// @dev In production the upgrader is a TimelockController (longest delay), so upgrades carry
     ///      a public delay and cannot be triggered by a governor or guardian compromise alone.
     /// @param newImplementation The address of the new implementation (validated by UUPS machinery).

@@ -170,115 +170,174 @@ library SpokeLifecycleLib {
 
     // ============ Proportional exits (hub and spoke) ============
 
-    /// @notice Hub exit: burn `units` DLRS and receive the caller's proportional slice of every hub asset.
-    function withdrawHub(uint256 units, uint256 deadline) external returns (uint256 hubUnits) {
-        if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
-        if (units == 0) revert IDollarStore.ZeroAmount();
-
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        // Effects before interaction: burn first (reverts on insufficient DLRS), then pay out.
-        DLRS(CoreStorage.layout().dlrs).burn(msg.sender, units);
-        _payHubProRata(r, msg.sender, units, r.pools[0].assets[0]);
-        hubUnits = units;
-    }
-
-    /// @notice Spoke exit: burn `shares` and receive the caller's proportional slice of the spoke asset
-    ///         and of the spoke's claim on hub dollars, the latter split across hub assets by reserve
-    ///         weight. Burning the last shares drains both sides to exactly zero.
-    function withdrawSpoke(uint16 poolId, uint256 shares, uint256 deadline)
+    /// @notice Proportional exit (see IDollarStore.withdraw): burn `receiptAmount` of the caller's DLRS
+    ///         (hub) or receipt shares (spoke) and pay the caller its slice of every pool asset.
+    function withdraw(uint16 poolId, uint256 receiptAmount, uint256[] calldata minAmountsOut, uint256 deadline)
         external
-        returns (uint256 spokeUnits, uint256 hubUnits)
+        returns (address[] memory assets, uint256[] memory amounts)
     {
         if (block.timestamp > deadline) revert IDollarStore.DeadlineExpired(deadline, block.timestamp);
-        if (shares == 0) revert IDollarStore.ZeroAmount();
-
+        if (receiptAmount == 0) revert IDollarStore.ZeroAmount();
         RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.Pool storage p = _spoke(r, poolId);
 
-        uint256 ownerShares = r.receiptShares[poolId][msg.sender];
-        if (ownerShares < shares) revert IDollarStore.InsufficientReceiptShares(shares, ownerShares);
+        uint256 owned;
+        if (poolId == 0) {
+            // Burning DLRS changes no reserve, so the hub payout is the same before or after it.
+            DLRS(CoreStorage.layout().dlrs).burn(msg.sender, receiptAmount);
+        } else {
+            _spoke(r, poolId);
+            owned = r.receiptShares[poolId][msg.sender];
+            if (owned < receiptAmount) revert IDollarStore.InsufficientReceiptShares(receiptAmount, owned);
+        }
+        uint256[] memory units;
+        uint256 spokeUnits;
+        uint256 hubUnits;
+        (assets, units, amounts, spokeUnits, hubUnits) = _quote(r, poolId, receiptAmount);
 
-        uint256 total = r.receiptTotalShares[poolId];
-        address spokeAsset = p.assets[0];
-        uint256 spokeReserve = r.reserves[poolId][spokeAsset];
-        uint256 hubClaim = p.dlrsReserve;
-
-        // Floor ONCE on total value, then split by side, so a position worth at least one unit always
-        // pays at least one unit (flooring each side separately could round both legs to zero and strand
-        // dust that no exit could ever clear).
-        uint256 poolValue = spokeReserve + hubClaim;
-        uint256 value = Math.mulDiv(shares, poolValue, total);
-        if (value == 0) revert IDollarStore.ZeroAmount();
-        spokeUnits = Math.mulDiv(value, spokeReserve, poolValue);
-        hubUnits = value - spokeUnits;
-        if (hubUnits > hubClaim) {
-            // Rounding pushed the hub leg past the claim; the spoke side always has room for the excess.
-            spokeUnits += hubUnits - hubClaim;
-            hubUnits = hubClaim;
+        uint256 n = assets.length;
+        if (minAmountsOut.length != 0) {
+            if (minAmountsOut.length != n) revert IDollarStore.MinAmountsLength(minAmountsOut.length, n);
+            for (uint256 i; i < n; ++i) {
+                if (amounts[i] < minAmountsOut[i]) {
+                    revert IDollarStore.WithdrawMinNotMet(assets[i], amounts[i], minAmountsOut[i]);
+                }
+            }
         }
 
-        // Legs that pay nothing are probed; legs that pay are checked by their own transfer.
-        if (spokeUnits == 0) _probeIssuer(spokeAsset, msg.sender);
-        if (hubUnits == 0) _probeAllHub(r, msg.sender);
-
-        r.receiptShares[poolId][msg.sender] = ownerShares - shares;
-        r.receiptTotalShares[poolId] = total - shares;
-
-        if (spokeUnits > 0) {
-            r.reserves[poolId][spokeAsset] = spokeReserve - spokeUnits;
-            IERC20(spokeAsset)
-                .safeTransfer(
-                    msg.sender, NormalizationLib.toNative(spokeUnits, r.assetConfig[spokeAsset].scalingFactor)
-                );
-        }
-        if (hubUnits > 0) {
-            p.dlrsReserve -= hubUnits;
-            _payHubProRata(r, msg.sender, hubUnits, spokeAsset);
+        // Assets the exit pays none of are probed; the others are checked by their own transfer.
+        for (uint256 i; i < n; ++i) {
+            if (amounts[i] == 0) _probeIssuer(assets[i], msg.sender);
         }
 
-        emit SpokeWithdrawn(poolId, msg.sender, shares, spokeUnits, hubUnits);
+        uint256 first; // index of the first hub asset in `assets`
+        if (poolId != 0) {
+            first = 1;
+            r.receiptShares[poolId][msg.sender] = owned - receiptAmount;
+            r.receiptTotalShares[poolId] -= receiptAmount;
+            r.reserves[poolId][assets[0]] -= spokeUnits;
+            r.pools[poolId].dlrsReserve -= hubUnits;
+        }
+        for (uint256 i = first; i < n; ++i) {
+            r.reserves[0][assets[i]] -= units[i];
+        }
+
+        for (uint256 i; i < n; ++i) {
+            if (amounts[i] == 0) continue;
+            IERC20(assets[i]).safeTransfer(msg.sender, amounts[i]);
+            emit Withdraw(msg.sender, poolId, assets[i], units[i], amounts[i]);
+        }
+        if (poolId != 0) emit SpokeWithdrawn(poolId, msg.sender, receiptAmount, spokeUnits, hubUnits);
     }
 
-    /// @dev Pay `units` of hub dollars to `to`, split across every hub asset in proportion to the hub's
-    ///      reserves of it (floor per asset, rounding remainder distributed one unit at a time to assets
-    ///      with spare reserve). Reverts if the hub's total reserves cannot cover `units`, which can only
-    ///      happen after a governance write-down (`syncReserves`). `errAsset` names the pool in the error.
-    function _payHubProRata(RegistryStorage.Layout storage r, address to, uint256 units, address errAsset) private {
+    /// @notice What withdraw would pay now for `receiptAmount` (see IDollarStore.previewWithdraw). Does
+    ///         not depend on the caller; reverts above all outstanding receipts.
+    function previewWithdraw(uint16 poolId, uint256 receiptAmount)
+        external
+        view
+        returns (address[] memory assets, uint256[] memory amounts)
+    {
+        if (receiptAmount == 0) revert IDollarStore.ZeroAmount();
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId == 0) {
+            uint256 supply = DLRS(CoreStorage.layout().dlrs).totalSupply();
+            if (receiptAmount > supply) revert IDollarStore.InsufficientReceiptShares(receiptAmount, supply);
+        }
+        (assets,, amounts,,) = _quote(r, poolId, receiptAmount);
+    }
+
+    /// @dev The payout for `receiptAmount`, shared by withdraw and previewWithdraw. `assets` is the
+    ///      spoke asset (spoke exits only), then every hub asset in listing order; `units` is each
+    ///      asset's 6dp payout and `amounts` the same in native units, 0 where nothing is paid. A spoke
+    ///      exit floors its total value once, then splits it between the spoke reserve and the hub
+    ///      claim, so a position worth at least one unit always pays at least one unit (flooring each
+    ///      side separately could round both legs to zero and strand dust that no exit could clear).
+    function _quote(RegistryStorage.Layout storage r, uint16 poolId, uint256 receiptAmount)
+        private
+        view
+        returns (
+            address[] memory assets,
+            uint256[] memory units,
+            uint256[] memory amounts,
+            uint256 spokeUnits,
+            uint256 hubUnits
+        )
+    {
         address[] storage hubAssets = r.pools[0].assets;
+        uint256 first;
+        address errAsset;
+        if (poolId == 0) {
+            errAsset = hubAssets[0]; // a hub exit burned DLRS, so the hub lists at least one asset
+            hubUnits = receiptAmount;
+        } else {
+            RegistryStorage.Pool storage p = _spoke(r, poolId);
+            uint256 total = r.receiptTotalShares[poolId];
+            if (receiptAmount > total) revert IDollarStore.InsufficientReceiptShares(receiptAmount, total);
+            errAsset = p.assets[0];
+            uint256 spokeReserve = r.reserves[poolId][errAsset];
+            uint256 hubClaim = p.dlrsReserve;
+            uint256 poolValue = spokeReserve + hubClaim;
+            uint256 value = Math.mulDiv(receiptAmount, poolValue, total);
+            if (value == 0) revert IDollarStore.ZeroAmount();
+            spokeUnits = Math.mulDiv(value, spokeReserve, poolValue);
+            hubUnits = value - spokeUnits;
+            if (hubUnits > hubClaim) {
+                // Rounding pushed the hub leg past the claim; the spoke side always has room for the excess.
+                spokeUnits += hubUnits - hubClaim;
+                hubUnits = hubClaim;
+            }
+            first = 1;
+        }
+
+        uint256 n = hubAssets.length;
+        assets = new address[](first + n);
+        units = new uint256[](first + n);
+        amounts = new uint256[](first + n);
+        if (first == 1) {
+            assets[0] = errAsset;
+            units[0] = spokeUnits;
+        }
+        for (uint256 i; i < n; ++i) {
+            assets[first + i] = hubAssets[i];
+        }
+        if (hubUnits > 0) _splitHub(r, hubAssets, units, first, hubUnits, errAsset);
+        for (uint256 i; i < assets.length; ++i) {
+            amounts[i] = NormalizationLib.toNative(units[i], r.assetConfig[assets[i]].scalingFactor);
+        }
+    }
+
+    /// @dev Write into `units[first..]` the split of `hubUnits` across hub assets by reserve weight:
+    ///      floor per asset, then the rounding remainder one unit at a time to assets with spare reserve,
+    ///      starting from the first listed. Reverts if the hub's total reserves cannot cover `hubUnits`,
+    ///      which can only happen after a governance write-down (`syncReserves`). `errAsset` names the
+    ///      pool in the error.
+    function _splitHub(
+        RegistryStorage.Layout storage r,
+        address[] storage hubAssets,
+        uint256[] memory units,
+        uint256 first,
+        uint256 hubUnits,
+        address errAsset
+    ) private view {
         uint256 n = hubAssets.length;
         uint256 total;
         for (uint256 i; i < n; ++i) {
             total += r.reserves[0][hubAssets[i]];
         }
-        if (total < units) revert IDollarStore.InsufficientReserves(errAsset, units, total);
+        if (total < hubUnits) revert IDollarStore.InsufficientReserves(errAsset, hubUnits, total);
 
-        uint256[] memory pay = new uint256[](n);
         uint256 paid;
         for (uint256 i; i < n; ++i) {
-            pay[i] = Math.mulDiv(units, r.reserves[0][hubAssets[i]], total); // floor
-            paid += pay[i];
+            uint256 pay = Math.mulDiv(hubUnits, r.reserves[0][hubAssets[i]], total); // floor
+            units[first + i] = pay;
+            paid += pay;
         }
         // Floors lose at most one unit per asset; hand the remainder out where there is spare reserve.
-        uint256 remainder = units - paid;
+        uint256 remainder = hubUnits - paid;
         for (uint256 i; remainder > 0; i = (i + 1) % n) {
-            if (r.reserves[0][hubAssets[i]] > pay[i]) {
-                pay[i] += 1;
+            if (r.reserves[0][hubAssets[i]] > units[first + i]) {
+                units[first + i] += 1;
                 remainder -= 1;
             }
-        }
-
-        // Probe hub assets this exit does not pay.
-        for (uint256 i; i < n; ++i) {
-            if (pay[i] == 0) _probeIssuer(hubAssets[i], to);
-        }
-
-        for (uint256 i; i < n; ++i) {
-            if (pay[i] == 0) continue;
-            address h = hubAssets[i];
-            r.reserves[0][h] -= pay[i];
-            uint256 native = NormalizationLib.toNative(pay[i], r.assetConfig[h].scalingFactor);
-            IERC20(h).safeTransfer(to, native);
-            emit Withdraw(to, 0, h, pay[i], native);
         }
     }
 
@@ -293,13 +352,5 @@ library SpokeLifecycleLib {
         (bool ok, bytes memory data) = asset.call(abi.encodeCall(IERC20.transfer, (wallet, 0)));
         bool delivered = ok && (data.length == 0 || abi.decode(data, (bool)));
         if (!delivered) revert IDollarStore.ExitBlockedByIssuer(asset, wallet);
-    }
-
-    /// @dev Probe every hub asset (a spoke exit whose hub leg is zero pays none of them).
-    function _probeAllHub(RegistryStorage.Layout storage r, address wallet) private {
-        address[] storage hubAssets = r.pools[0].assets;
-        for (uint256 i; i < hubAssets.length; ++i) {
-            _probeIssuer(hubAssets[i], wallet);
-        }
     }
 }

@@ -4,8 +4,10 @@ pragma solidity 0.8.24;
 import {SpokeQueueTriggerTest} from "./SpokeQueueTrigger.t.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {SpokeShareLib} from "../src/libraries/SpokeShareLib.sol";
+import {Exits} from "./utils/Exits.sol";
 
 /// @notice Recovery must isolate historical shares from all capital in a replacement pool.
+
 contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
     uint256 internal constant CAPITAL = 1_000e6;
     uint256 internal constant NATIVE_CAPITAL = 1_000e18;
@@ -15,7 +17,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
     function _fund() internal {
         vm.startPrank(alice);
         rlusd.approve(address(store), NATIVE_CAPITAL);
-        store.deposit(spoke, address(rlusd), NATIVE_CAPITAL, block.timestamp);
+        store.deposit(spoke, address(rlusd), NATIVE_CAPITAL, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -38,21 +40,22 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         assertEq(store.getReceiptTotalShares(spoke), CAPITAL);
 
         vm.prank(governor);
-        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0, 0);
         assertGt(fresh, spoke);
         vm.startPrank(bob);
         rlusd.approve(address(store), units * SCALE);
-        assertEq(store.deposit(fresh, address(rlusd), units * SCALE, block.timestamp), units);
+        (, uint256 shares) = store.deposit(fresh, address(rlusd), units * SCALE, bob, block.timestamp);
+        assertEq(shares, units);
         vm.stopPrank();
         vm.startPrank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(spoke, CAPITAL, block.timestamp);
+        store.withdraw(spoke, CAPITAL, new uint256[](0), block.timestamp);
         vm.expectPartialRevert(IDollarStore.InsufficientReceiptShares.selector);
-        store.withdraw(fresh, 1, block.timestamp);
+        store.withdraw(fresh, 1, new uint256[](0), block.timestamp);
         vm.expectPartialRevert(IDollarStore.PoolPaused.selector);
-        store.deposit(spoke, address(rlusd), units * SCALE, block.timestamp);
+        store.deposit(spoke, address(rlusd), units * SCALE, alice, block.timestamp);
         vm.expectPartialRevert(IDollarStore.PoolPaused.selector);
-        store.deposit(spoke, address(usdc), units, block.timestamp);
+        store.deposit(spoke, address(usdc), units, alice, block.timestamp);
         vm.stopPrank();
 
         vm.prank(governor);
@@ -69,7 +72,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         assertEq(store.getReserve(spoke, address(rlusd)), 0);
         assertEq(store.getReceiptShares(fresh, alice), 0);
         vm.prank(bob);
-        (uint256 payout, uint256 hubPayout) = store.withdraw(fresh, units, block.timestamp);
+        (uint256 payout, uint256 hubPayout) = Exits.withdraw(store, fresh, units);
         assertEq(payout, units);
         assertEq(hubPayout, 0);
     }
@@ -82,9 +85,9 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         uint256 beforeSpoke = rlusd.balanceOf(bob);
         uint256 beforeHub = usdc.balanceOf(bob);
         vm.expectRevert(SpokeShareLib.PoolFullyImpaired.selector);
-        store.deposit(spoke, address(rlusd), NATIVE_CAPITAL, block.timestamp);
+        store.deposit(spoke, address(rlusd), NATIVE_CAPITAL, bob, block.timestamp);
         vm.expectRevert(SpokeShareLib.PoolFullyImpaired.selector);
-        store.deposit(spoke, address(usdc), CAPITAL, block.timestamp);
+        store.deposit(spoke, address(usdc), CAPITAL, bob, block.timestamp);
         vm.stopPrank();
         assertEq(rlusd.balanceOf(bob), beforeSpoke);
         assertEq(usdc.balanceOf(bob), beforeHub);
@@ -120,7 +123,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
         vm.prank(governor);
         store.removePool(spoke);
         vm.prank(governor);
-        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 fresh = store.createSpoke(address(rlusd), address(feed), 0, 0);
         _queue(bob, rlusd, usdc, NATIVE_CAPITAL);
         uint256 position = store.getUserQueuePositions(bob)[0];
         rlusd.setBlocked(bob, true);
@@ -159,7 +162,7 @@ contract SpokeImpairedRecoveryTest is SpokeQueueTriggerTest {
     function test_dlrsReserveBlocksRemoval() public {
         vm.startPrank(alice);
         usdc.approve(address(store), CAPITAL);
-        store.deposit(spoke, address(usdc), CAPITAL, block.timestamp);
+        store.deposit(spoke, address(usdc), CAPITAL, alice, block.timestamp);
         vm.stopPrank();
         vm.prank(governor);
         vm.expectPartialRevert(IDollarStore.PoolNotEmpty.selector);

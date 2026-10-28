@@ -8,9 +8,10 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Exits} from "./utils/Exits.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P7: per-spoke launch caps (exposure = spoke reserve + dlrsReserve) and pool-pause
+/// @notice Per-spoke launch caps (exposure = spoke reserve + dlrsReserve) and pool-pause
 ///         semantics (pause blocks deposits/swaps/new-queue/processQueue for that spoke, leaves LP
 ///         withdrawals and queue cancellations live).
 contract SpokeCapsAndPausesTest is Test {
@@ -42,7 +43,7 @@ contract SpokeCapsAndPausesTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         usdc.mint(alice, 1_000_000e6);
@@ -54,14 +55,14 @@ contract SpokeCapsAndPausesTest is Test {
     function _depositSpokeAsset(address who, uint256 nativeAmt) internal {
         vm.startPrank(who);
         rlusd.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(rlusd), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(rlusd), nativeAmt, who, block.timestamp);
         vm.stopPrank();
     }
 
     function _fund(address who, uint256 nativeAmt) internal {
         vm.startPrank(who);
         usdc.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(usdc), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(usdc), nativeAmt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -78,7 +79,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, spoke, uint256(1_100e6), uint256(1_000e6))
         );
-        store.deposit(spoke, address(rlusd), 500e18, block.timestamp); // 600 + 500 > 1000
+        store.deposit(spoke, address(rlusd), 500e18, alice, block.timestamp); // 600 + 500 > 1000
         vm.stopPrank();
     }
 
@@ -94,7 +95,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, spoke, uint256(1_100e6), uint256(1_000e6))
         );
-        store.deposit(spoke, address(rlusd), 500e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 500e18, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -121,7 +122,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -131,7 +132,7 @@ contract SpokeCapsAndPausesTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -143,11 +144,11 @@ contract SpokeCapsAndPausesTest is Test {
         vm.startPrank(bob);
         usdc.approve(address(store), 500e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.swap(address(usdc), address(rlusd), 500e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(rlusd), 500e6, 0, block.timestamp);
 
         rlusd.approve(address(store), 500e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -155,7 +156,7 @@ contract SpokeCapsAndPausesTest is Test {
         // Queue a spoke->hub order while live, then pause and try to process it.
         vm.startPrank(bob);
         rlusd.approve(address(store), 500e18);
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp); // queues
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp); // queues
         vm.stopPrank();
 
         vm.prank(pauser);
@@ -173,14 +174,14 @@ contract SpokeCapsAndPausesTest is Test {
         store.pausePool(spoke);
 
         vm.prank(alice);
-        (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits,) = Exits.withdraw(store, spoke, 1_000e6);
         assertEq(spokeUnits, 1_000e6, "LP can exit a paused spoke");
     }
 
     function test_pausePool_leavesCancelLive() public {
         vm.startPrank(bob);
         rlusd.approve(address(store), 500e18);
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp); // queues
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp); // queues
         uint256 id = store.getUserQueuePositions(bob)[0];
         vm.stopPrank();
 
@@ -202,8 +203,8 @@ contract SpokeCapsAndPausesTest is Test {
 
         vm.startPrank(bob);
         usdc.approve(address(store), 500e6);
-        (uint256 filled,) = store.swap(address(usdc), address(rlusd), 500e6, 0, 0, block.timestamp);
+        (, uint256 filled,,) = store.swapOrQueue(address(usdc), address(rlusd), 500e6, 0, block.timestamp);
         vm.stopPrank();
-        assertEq(filled, 500e6, "swaps work again after unpause");
+        assertEq(filled, 500e18, "swaps work again after unpause");
     }
 }

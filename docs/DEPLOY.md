@@ -138,7 +138,7 @@ set -a; source .env.sepolia; source .deployed.sepolia; set +a
 
 `DollarStore` links three external libraries - `SpokeAdminLib` (spoke create + reserve write-down /
 rescue), `SpokeLifecycleLib` (wind-down / haircut / removePool / withdraw), and `SwapRouteLib`
-(the directed-swap routing / fill / FIFO-settle engine used by swap / swapExactInput / swapSpokeToSpoke /
+(the directed-swap routing / fill / FIFO-settle engine used by swapOrQueue / swapExactInput / swapSpokeToSpoke /
 getSwapQuote / processQueue /
 cancelQueue) - so the implementation stays under the EIP-170 24576-byte limit while shipping the full
 feature set. `forge script` deploys all three libraries and links them automatically during the
@@ -206,8 +206,10 @@ Before listing an asset, check it against the listing precondition in [SECURITY.
 2. The token must accept a zero-value transfer. If it rejects one, every exit that pays none of it
    reverts; exempt it with `setProbeExempt(asset, true)` (governor) and accept that its issuer is
    then not checked on those exits.
+3. The token must not call any other address during a transfer (no transfer hook or callback). Read
+   its `transfer` and `transferFrom` code, and check a bridged copy separately on each chain.
 
-The Sepolia test tokens below are mocks and meet both.
+The Sepolia test tokens below are mocks and meet all three.
 
 With the Safe (production): Safe -> New transaction -> Transaction Builder, targeting the governor
 timelock, function `schedule(...)` with the payload below. Collect the signatures. After the delay, another tx
@@ -266,7 +268,7 @@ cast send $GOV_TL "execute(address,uint256,bytes,bytes32,bytes32)" \
 cast call $PROXY "isAssetListed(address)(bool)" $USDT --rpc-url sepolia
 ```
 
-Then set the launch cap on the hub (poolId 0). The cap is in 6-decimal units: the dollar amount
+Then set the launch cap on the hub (poolId 0). It limits DLRS supply; hub assets deposited into a spoke count against that spoke's cap instead. The cap is in 6-decimal units: the dollar amount
 followed by six zeros (1,000,000 dollars = `1000000000000`); 0 means no cap. Schedule:
 
 ```bash
@@ -289,12 +291,13 @@ cast call $PROXY "getLaunchCap(uint16)(uint256)" 0 --rpc-url sepolia
 Optionally create a spoke pool. A spoke holds one asset outside the hub, paired with a DLRS-side
 reserve funded from the hub. The asset must not already be listed (an asset belongs to one pool).
 `MIN_DLRS` is the protected minimum DLRS-side reserve, in 6-decimal units, that swaps cannot take the
-spoke below; 0 means no floor. On Sepolia, use the mock USDS (18 decimals) from
+spoke below; 0 means no floor. `CAP` is the spoke's launch cap, in 6-decimal units, set in the same
+call; 0 means no cap. On Sepolia, use the mock USDS (18 decimals) from
 [deployments/sepolia.md](../deployments/sepolia.md). Schedule:
 
 ```bash
-SPOKE=<spoke asset>;  SPOKE_FEED=<spoke/usd feed>;  MIN_DLRS=0
-DATA=$(cast calldata "createSpoke(address,address,uint256)" $SPOKE $SPOKE_FEED $MIN_DLRS)
+SPOKE=<spoke asset>;  SPOKE_FEED=<spoke/usd feed>;  MIN_DLRS=0;  CAP=1000000000000
+DATA=$(cast calldata "createSpoke(address,address,uint256,uint256)" $SPOKE $SPOKE_FEED $MIN_DLRS $CAP)
 cast send $GOV_TL "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" \
   $PROXY 0 $DATA $ZERO $ZERO "$GOVERNOR_DELAY" \
   --private-key $DEPLOYER_PRIVATE_KEY --rpc-url sepolia
@@ -311,12 +314,13 @@ cast call $PROXY "assetPoolId(address)(uint16)" $SPOKE --rpc-url sepolia &&
 cast call $PROXY "poolCount()(uint256)" --rpc-url sepolia
 ```
 
-A spoke created this way has no launch cap until one is set. To cap it, repeat the launch cap blocks
-above with the spoke's pool id in place of `0`.
+The call names no pool id, so several spokes can be queued in one waiting period and executed in any
+order. To change the cap later, use the launch cap blocks above with the spoke's pool id in place of
+`0`. Do not queue a new spoke's `setLaunchCap` before the spoke exists: the pool id it names is only a
+guess until then, and another spoke created first would take it.
 
-To create the spoke and set its cap in one timelock operation, so the spoke never exists uncapped,
-use `script/CreateSpoke.s.sol` instead of the two blocks above. It reads its own variable names; the
-cap is in 6-decimal units. Run it once to schedule and, after the governor timelock's minimum delay, once more to execute:
+`script/CreateSpoke.s.sol` builds the same call. It reads its own variable names. Run it once to schedule
+and, after the governor timelock's minimum delay, once more to execute:
 
 ```bash
 export STORE_PROXY=$PROXY GOVERNOR_TIMELOCK=$GOV_TL SPOKE_ASSET=$SPOKE SPOKE_FEED=$SPOKE_FEED
@@ -326,7 +330,7 @@ ACTION=execute forge script script/CreateSpoke.s.sol:CreateSpoke --rpc-url sepol
 ```
 
 If an `execute` reverts with `TimelockUnexpectedOperationState`, the delay has not passed yet; wait
-and run it again.
+and run it again. After each spoke is created, read `getLaunchCap` for its pool id and confirm the cap.
 
 ## Phase 4 - Governance rehearsal (mandatory on Sepolia)
 

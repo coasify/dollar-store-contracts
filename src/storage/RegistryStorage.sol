@@ -6,8 +6,7 @@ pragma solidity 0.8.24;
 /// @dev Reserves and DLRS-side bookkeeping are tracked in normalized 6-decimal units.
 ///      The Pool struct carries ALL its fields from day one because Pool lives in a dynamic
 ///      array (Pool[]), and growing a struct stored in an array after deployment is unsafe.
-///      Fields unused in early milestones (minDlrsReserve, launchCap, receiptToken) are reserved
-///      here, and a __gap tail lets future pool-level fields be carved out later without changing
+///      `receiptToken` is unused and kept only for the layout, and a __gap tail lets future pool-level fields be carved out later without changing
 ///      the struct's total size (so array elements never shift).
 /// @custom:security-contact admin@dollarstore.world
 library RegistryStorage {
@@ -17,7 +16,7 @@ library RegistryStorage {
         Spoke
     }
 
-    /// @notice Spoke lifecycle (U2). Active = normal. WindingDown = stop new risk (no deposits, no
+    /// @notice Spoke lifecycle. Active = normal. WindingDown = stop new risk (no deposits, no
     ///         risk-increasing spoke->hub trades) but exits/cancels/risk-reducing hub->spoke stay live.
     ///         Killed = terminal (removePool, once fully drained). Default 0 = Active.
     enum PoolStatus {
@@ -34,11 +33,11 @@ library RegistryStorage {
         uint8 decimals;
         /// @notice 10**(decimals - 6); converts native amounts to/from normalized 6dp units.
         uint64 scalingFactor;
-        /// @notice Chainlink price feed (required at listing; used by the peg check in M5).
+        /// @notice Chainlink price feed (required at listing; used by the peg check).
         address priceFeed;
         /// @notice Whether the asset is listed/supported.
         bool listed;
-        /// @notice Per-asset deposit pause (set by guardian in M5).
+        /// @notice Per-asset deposit pause: set by a pauser, lifted by the unpauser.
         bool depositPaused;
         /// @notice Skip the zero-value transfer probe on exits for this asset (governor). For tokens whose
         ///         transfer controls are not exercised by a zero-value transfer, or that reject one.
@@ -49,20 +48,20 @@ library RegistryStorage {
     struct Pool {
         /// @notice Hub or Spoke.
         PoolKind kind;
-        /// @notice Per-pool pause (M5).
+        /// @notice Per-pool pause.
         bool paused;
         /// @notice Assets that belong to this pool.
         address[] assets;
         /// @notice DLRS-side reserve internal to a spoke (normalized 6dp). Unused for the hub.
         uint256 dlrsReserve;
-        /// @notice Minimum DLRS-side liquidity a spoke keeps from spoke->hub SWAPS (M6/U2). LP exits are
+        /// @notice Minimum DLRS-side liquidity a spoke keeps from spoke->hub SWAPS. LP exits are
         ///         senior to it and may take dlrsReserve below this value.
         uint256 minDlrsReserve;
-        /// @notice Temporary launch exposure cap (M6). 0 = no cap.
+        /// @notice Temporary launch exposure cap. 0 = no cap.
         uint256 launchCap;
-        /// @notice Non-transferable LP receipt token for a spoke (U2). address(0) until set.
+        /// @notice Unused; kept only for the storage layout. Always address(0).
         address receiptToken;
-        /// @notice Spoke lifecycle status (U2). Packs into `receiptToken`'s slot (address = 20 bytes,
+        /// @notice Spoke lifecycle status. Packs into `receiptToken`'s slot (address = 20 bytes,
         ///         enum = 1 byte), so the struct's total slot count is unchanged and `__gap` stays [32].
         PoolStatus status;
         /// @notice Reserved slots for future pool-level state (route flags, receipt metadata, ...).
@@ -83,11 +82,11 @@ library RegistryStorage {
         Pool[] pools;
         /// @notice poolId => asset => active reserve (normalized 6dp).
         mapping(uint16 => mapping(address => uint256)) reserves;
-        // --- appended for spokes (U2); mappings appended at the end of a namespaced struct are
+        // --- appended for spokes; mappings appended at the end of a namespaced struct are
         //     layout-safe (each occupies its own base slot, existing fields never shift). ---
-        /// @notice Non-transferable spoke LP receipt shares: poolId => owner => shares. (U2)
+        /// @notice Non-transferable spoke LP receipt shares: poolId => owner => shares.
         mapping(uint16 => mapping(address => uint256)) receiptShares;
-        /// @notice Total outstanding receipt shares per spoke pool: poolId => totalShares. (U2)
+        /// @notice Total outstanding receipt shares per spoke pool: poolId => totalShares.
         mapping(uint16 => uint256) receiptTotalShares;
     }
 

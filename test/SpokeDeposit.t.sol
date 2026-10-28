@@ -11,7 +11,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P3: spoke deposits. Spoke-asset LP enters the spoke reserve; hub-asset LP funds the
+/// @notice Spoke deposits. Spoke-asset LP enters the spoke reserve; hub-asset LP funds the
 ///         spoke's dlrsReserve. Both mint pro-rata receipt shares. No wallet DLRS for spoke LPs.
 contract SpokeDepositTest is Test {
     DollarStore internal store;
@@ -33,8 +33,9 @@ contract SpokeDepositTest is Test {
 
     event SpokeLiquidityAdded(
         uint16 indexed poolId,
-        address indexed provider,
+        address indexed receiver,
         address indexed asset,
+        address caller,
         uint256 nativeAmount,
         uint256 valueUnits,
         uint256 sharesMinted
@@ -53,7 +54,7 @@ contract SpokeDepositTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         usdc.mint(alice, 1_000_000e6);
@@ -65,14 +66,14 @@ contract SpokeDepositTest is Test {
     function _depositSpokeAsset(address who, uint256 nativeAmt) internal returns (uint256 shares) {
         vm.startPrank(who);
         rlusd.approve(address(store), nativeAmt);
-        shares = store.deposit(spoke, address(rlusd), nativeAmt, block.timestamp);
+        (, shares) = store.deposit(spoke, address(rlusd), nativeAmt, who, block.timestamp);
         vm.stopPrank();
     }
 
     function _fundWithHub(address who, uint256 nativeAmt) internal returns (uint256 shares) {
         vm.startPrank(who);
         usdc.approve(address(store), nativeAmt);
-        shares = store.deposit(spoke, address(usdc), nativeAmt, block.timestamp);
+        (, shares) = store.deposit(spoke, address(usdc), nativeAmt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -82,8 +83,8 @@ contract SpokeDepositTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         vm.expectEmit(true, true, true, true, address(store));
-        emit SpokeLiquidityAdded(spoke, alice, address(rlusd), 1_000e18, 1_000e6, 1_000e6);
-        uint256 shares = store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        emit SpokeLiquidityAdded(spoke, alice, address(rlusd), alice, 1_000e18, 1_000e6, 1_000e6);
+        (, uint256 shares) = store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(shares, 1_000e6, "first LP mints shares 1:1 with value");
@@ -133,14 +134,14 @@ contract SpokeDepositTest is Test {
     function test_deposit_revertsWrongSpokeAsset() public {
         MockERC20 pyusd = new MockERC20("PayPal USD", "PYUSD", 6);
         vm.prank(governor);
-        store.createSpoke(address(pyusd), address(feed), 0); // spoke B (poolId 2)
+        store.createSpoke(address(pyusd), address(feed), 0, 0); // spoke B (poolId 2)
 
         // Depositing spoke B's asset into spoke A must revert WrongPool.
         pyusd.mint(alice, 1_000e6);
         vm.startPrank(alice);
         pyusd.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.WrongPool.selector, address(pyusd), spoke));
-        store.deposit(spoke, address(pyusd), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -148,7 +149,7 @@ contract SpokeDepositTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.deposit(spoke, address(rlusd), 0, block.timestamp);
+        store.deposit(spoke, address(rlusd), 0, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -158,7 +159,7 @@ contract SpokeDepositTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.deposit(spoke, address(usdc), 0, block.timestamp);
+        store.deposit(spoke, address(usdc), 0, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -178,7 +179,7 @@ contract SpokeDepositTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.LaunchCapExceeded.selector, spoke, uint256(1_001e6), uint256(1_000e6))
         );
-        store.deposit(spoke, address(rlusd), 1e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1e18, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -190,11 +191,11 @@ contract SpokeDepositTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(rlusd)));
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         // Hub-asset funding into a killed (paused) spoke is blocked by the pool-pause check.
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -202,7 +203,7 @@ contract SpokeDepositTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(9)));
-        store.deposit(9, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(9, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -212,11 +213,11 @@ contract SpokeDepositTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         vm.expectRevert(); // EnforcedPause
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
     }
 
-    // ============ removePool now blocked when the spoke has state (deferred from P2) ============
+    // ============ removePool is blocked while the spoke has state ============
 
     function test_removePool_revertsWhenNotEmpty() public {
         _depositSpokeAsset(alice, 1_000e18);

@@ -5,8 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {QueueStorage} from "../src/storage/QueueStorage.sol";
 
 /// @notice Harness exercising the QueueStorage library against the harness's own storage.
-/// @dev QueueStorage is reserved scaffolding for M4 (no live logic yet); these tests pin the
-///      directed-key convention, the constants, the ERC-7201 slot, and a storage round-trip.
+/// @dev These tests pin the QueueStorage directed-key convention, the constants, the ERC-7201 slot, and a storage round-trip.
 contract QueueStorageHarness {
     function key(address o, address w, uint16 poolId) external pure returns (bytes32) {
         return QueueStorage.queueKey(o, w, poolId);
@@ -29,7 +28,6 @@ contract QueueStorageHarness {
             offerAsset: offerAsset,
             wantAsset: wantAsset,
             offerAmount: amount,
-            tip: 0,
             timestamp: block.timestamp,
             next: 0,
             prev: 0
@@ -42,10 +40,6 @@ contract QueueStorageHarness {
 
     function readOffer(uint256 id) external view returns (uint256) {
         return QueueStorage.layout().positions[id].offerAmount;
-    }
-
-    function readTip(uint256 id) external view returns (uint256) {
-        return QueueStorage.layout().positions[id].tip;
     }
 
     function bumpQueue(bytes32 k, uint256 depth) external {
@@ -109,7 +103,6 @@ contract QueueStorageTest is Test {
         h.writePosition(1, address(0xBEEF), USDC, USDT, 1_000e6);
         assertEq(h.readOwner(1), address(0xBEEF), "owner");
         assertEq(h.readOffer(1), 1_000e6, "offerAmount");
-        assertEq(h.readTip(1), 0, "tip reserved = 0");
 
         bytes32 k = h.key(USDC, USDT, 0);
         h.bumpQueue(k, 500e6);

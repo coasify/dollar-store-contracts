@@ -92,7 +92,7 @@ contract ParkedEscrowTest is Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usds), address(feed));
-        spoke = store.createSpoke(address(pyusd), address(feed), 0);
+        spoke = store.createSpoke(address(pyusd), address(feed), 0, 0);
         vm.stopPrank();
 
         address[4] memory who = [alice, bob, carol, dana];
@@ -110,7 +110,7 @@ contract ParkedEscrowTest is Test {
 
     function _sellPyusdForUsdc(address who, uint256 amt) internal returns (uint256 id) {
         vm.prank(who);
-        (, uint256 queued) = store.swap(address(pyusd), address(usdc), amt, 0, 0, block.timestamp);
+        (,, uint256 queued,) = store.swapOrQueue(address(pyusd), address(usdc), amt, 0, block.timestamp);
         assertEq(queued, amt, "queued: spoke has no claim to pay from");
         uint256[] memory ids = store.getUserQueuePositions(who);
         id = ids[ids.length - 1];
@@ -121,7 +121,7 @@ contract ParkedEscrowTest is Test {
     function _parkViaFunding(address who, uint256 usdcAmt) internal {
         usdc.setBlocked(who, true);
         vm.prank(dana);
-        store.deposit(spoke, address(usdc), usdcAmt, block.timestamp);
+        store.deposit(spoke, address(usdc), usdcAmt, dana, block.timestamp);
     }
 
     // ============ Blocked seller: the line advances past her, her escrow stays hers ============
@@ -129,7 +129,7 @@ contract ParkedEscrowTest is Test {
     function test_frozenSeller_isParked_lineAdvances_noShares() public {
         // Carol LPs 400 PYUSD. Alice then Bob queue PYUSD -> USDC; nothing can pay them yet.
         vm.prank(carol);
-        store.deposit(spoke, address(pyusd), 400e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 400e6, carol, block.timestamp);
         uint256 aliceId = _sellPyusdForUsdc(alice, 100e6);
         _sellPyusdForUsdc(bob, 500e6); // min order size once the line is non-empty
 
@@ -166,7 +166,7 @@ contract ParkedEscrowTest is Test {
         // Alice has no path to any hub asset: she holds no shares and no DLRS.
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, 1, 0));
-        store.withdraw(spoke, 1, block.timestamp);
+        store.withdraw(spoke, 1, new uint256[](0), block.timestamp);
 
         // Cancel while blocked on USDC: the PYUSD transfer succeeds, so she gets her escrow back as PYUSD.
         uint256 pyBefore = pyusd.balanceOf(alice);
@@ -180,7 +180,7 @@ contract ParkedEscrowTest is Test {
 
     function test_twoIssuerFreeze_noExitInAnyOtherAsset_spokeStillRetirable() public {
         vm.prank(carol);
-        store.deposit(spoke, address(pyusd), 400e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 400e6, carol, block.timestamp);
         uint256 aliceId = _sellPyusdForUsdc(alice, 100e6);
 
         pyusd.setBlocked(alice, true);
@@ -192,7 +192,7 @@ contract ParkedEscrowTest is Test {
         assertEq(dlrs.balanceOf(alice), 0);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, 1, 0));
-        store.withdraw(spoke, 1, block.timestamp);
+        store.withdraw(spoke, 1, new uint256[](0), block.timestamp);
 
         // Cancel fails while PYUSD is blocked to her: position stays parked, escrow intact.
         vm.prank(alice);
@@ -202,9 +202,9 @@ contract ParkedEscrowTest is Test {
 
         // Everyone else can leave and the spoke can be killed regardless of Alice's parked escrow.
         vm.prank(carol);
-        store.withdraw(spoke, 400e6, block.timestamp);
+        store.withdraw(spoke, 400e6, new uint256[](0), block.timestamp);
         vm.prank(dana);
-        store.withdraw(spoke, 100e6, block.timestamp);
+        store.withdraw(spoke, 100e6, new uint256[](0), block.timestamp);
         assertEq(store.getReserve(spoke, address(pyusd)), 0);
         assertEq(store.getDlrsReserve(spoke), 0);
         vm.startPrank(governor);
@@ -238,9 +238,9 @@ contract ParkedEscrowTest is Test {
     ///      her, which parks it. Bob's own remainder queues and he cancels it, leaving both lines empty.
     function _parkOneUnit() internal {
         vm.prank(alice);
-        store.swap(address(pyusd), address(usdc), 1, 0, 0, block.timestamp);
+        store.swapOrQueue(address(pyusd), address(usdc), 1, 0, block.timestamp);
         vm.prank(bob);
-        store.swap(address(usdc), address(pyusd), 1, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(pyusd), 1, 0, block.timestamp);
         uint256 bobId = store.getUserQueuePositions(bob)[0];
         vm.prank(bob);
         store.cancelQueue(bobId);
@@ -253,14 +253,14 @@ contract ParkedEscrowTest is Test {
             _parkOneUnit();
         }
         vm.prank(alice);
-        store.swap(address(usds), address(pyusd), 100e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usds), address(pyusd), 100e18, 0, block.timestamp);
         assertEq(store.getUserQueuePositions(alice).length, parked + 1);
 
         uint256 pyBefore = pyusd.balanceOf(alice);
         vm.cool(address(store));
         vm.prank(dana);
         uint256 g = gasleft();
-        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 500e6, dana, block.timestamp);
         gasUsed = g - gasleft();
 
         assertEq(pyusd.balanceOf(alice) - pyBefore, 100e6, "alice paid in full");
@@ -284,7 +284,7 @@ contract ParkedEscrowTest is Test {
         _parkOneUnit();
         _parkOneUnit();
         vm.prank(alice);
-        store.swap(address(usds), address(pyusd), 100e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usds), address(pyusd), 100e18, 0, block.timestamp);
         uint256[] memory ids = store.getUserQueuePositions(alice);
         assertEq(ids.length, 3);
         (uint256 parkedA, uint256 parkedB, uint256 queued) = (ids[0], ids[1], ids[2]);
@@ -299,7 +299,7 @@ contract ParkedEscrowTest is Test {
 
         // A deposit pays the queued position in full: the remaining parked one moves to the front.
         vm.prank(dana);
-        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 500e6, dana, block.timestamp);
         ids = store.getUserQueuePositions(alice);
         assertEq(ids.length, 1);
         assertEq(ids[0], parkedB);
@@ -328,7 +328,7 @@ contract ParkedEscrowTest is Test {
     function test_settle_payoutIssuerDecides_offerAssetBlockDoesNotPark() public {
         // Alice queues USDC -> PYUSD; the spoke holds no PYUSD, so nothing can pay her yet.
         vm.prank(alice);
-        (, uint256 queued) = store.swap(address(usdc), address(pyusd), 100e6, 0, 0, block.timestamp);
+        (,, uint256 queued,) = store.swapOrQueue(address(usdc), address(pyusd), 100e6, 0, block.timestamp);
         assertEq(queued, 100e6);
         uint256 id = store.getUserQueuePositions(alice)[0];
 
@@ -341,7 +341,7 @@ contract ParkedEscrowTest is Test {
         // Dana's PYUSD deposit settles the line: the PYUSD payout succeeds, so Alice is paid in full.
         uint256 pyBefore = pyusd.balanceOf(alice);
         vm.prank(dana);
-        store.deposit(spoke, address(pyusd), 500e6, block.timestamp);
+        store.deposit(spoke, address(pyusd), 500e6, dana, block.timestamp);
 
         assertEq(pyusd.balanceOf(alice) - pyBefore, 100e6, "paid in the asset she wanted");
         assertFalse(store.isQueuePositionParked(id));
@@ -363,7 +363,7 @@ contract ParkedEscrowTest is Test {
 
         // Dana leaves and the spoke is removed with 600 PYUSD still parked.
         vm.prank(dana);
-        store.withdraw(spoke, 600e6, block.timestamp);
+        store.withdraw(spoke, 600e6, new uint256[](0), block.timestamp);
         vm.startPrank(governor);
         store.windDownSpoke(spoke);
         store.removePool(spoke);
@@ -442,7 +442,7 @@ contract ParkedEscrowTest is Test {
         evil.mint(alice, 1_000e6);
         vm.startPrank(alice);
         evil.approve(address(store), type(uint256).max);
-        store.swap(address(evil), address(usds), 1_000e6, 0, 0, block.timestamp); // no USDS: queued
+        store.swapOrQueue(address(evil), address(usds), 1_000e6, 0, block.timestamp); // no USDS: queued
         vm.stopPrank();
         uint256 id = store.getUserQueuePositions(alice)[0];
 

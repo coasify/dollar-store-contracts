@@ -56,7 +56,7 @@ contract PoolScopedQueuesTest is Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usdt), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         address[4] memory who = [lp, alice, carol, dave];
@@ -75,7 +75,8 @@ contract PoolScopedQueuesTest is Test {
     /// @dev `who` queues a buy of RLUSD with USDC against a spoke that holds no RLUSD.
     function _queueBuyer(address who, uint256 usdcNative) internal returns (uint256 id) {
         vm.prank(who);
-        (uint256 filled, uint256 queued) = store.swap(address(usdc), address(rlusd), usdcNative, 0, 0, block.timestamp);
+        (, uint256 filled, uint256 queued,) =
+            store.swapOrQueue(address(usdc), address(rlusd), usdcNative, 0, block.timestamp);
         assertEq(filled, 0);
         assertEq(queued, usdcNative);
         id = store.getUserQueuePositions(who)[0];
@@ -93,7 +94,7 @@ contract PoolScopedQueuesTest is Test {
     function _removeAndRelist() internal returns (uint16 spoke2) {
         vm.startPrank(governor);
         store.removePool(spoke);
-        spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke2 = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
         assertEq(spoke2, spoke + 1, "fresh pool id");
     }
@@ -136,16 +137,16 @@ contract PoolScopedQueuesTest is Test {
         // are zero. Dave then buys RLUSD with USDC; the spoke is empty, so he is queued. Different pairs,
         // so Alice and Dave never match each other.
         vm.prank(lp);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, lp, block.timestamp);
         vm.prank(alice);
-        (, uint256 queuedSell) = store.swap(address(rlusd), address(usdt), 500e18, 0, 0, block.timestamp);
-        assertEq(queuedSell, 500e6);
+        (,, uint256 queuedSell,) = store.swapOrQueue(address(rlusd), address(usdt), 500e18, 0, block.timestamp);
+        assertEq(queuedSell, 500e18);
         uint256 sellId = store.getUserQueuePositions(alice)[0];
         vm.prank(governor);
         store.windDownSpoke(spoke);
         uint256 lpShares = store.getReceiptShares(spoke, lp);
         vm.prank(lp);
-        store.withdraw(spoke, lpShares, block.timestamp);
+        store.withdraw(spoke, lpShares, new uint256[](0), block.timestamp);
         assertEq(store.getReserve(spoke, address(rlusd)), 0, "LP took the whole reserve");
         assertEq(store.getReceiptTotalShares(spoke), 0, "no shares left");
         uint256 buyId = _queueBuyer(dave, 500e6);
@@ -160,13 +161,13 @@ contract PoolScopedQueuesTest is Test {
 
         // Carol sells RLUSD for USDT in the new spoke: same pair as Alice, live line.
         vm.prank(carol);
-        store.swap(address(rlusd), address(usdt), 200e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdt), 200e18, 0, block.timestamp);
         uint256 liveSellId = store.getUserQueuePositions(carol)[0];
 
         // Liquidity arriving in the new spoke, in either direction, settles ITS lines only.
         vm.startPrank(lp);
-        store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
-        store.deposit(spoke2, address(usdt), 1_000e6, block.timestamp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
+        store.deposit(spoke2, address(usdt), 1_000e6, lp, block.timestamp);
         vm.stopPrank();
         assertEq(_amount(liveSellId), 0, "live seller settled by the successor's USDT");
         assertEq(_amount(buyId), 500e6, "old buyer not settled by the successor's RLUSD");
@@ -174,7 +175,8 @@ contract PoolScopedQueuesTest is Test {
 
         // And the new spoke trades instantly: no same-direction position blocks reserve fills.
         vm.prank(carol);
-        assertEq(store.swapExactInput(address(usdc), address(rlusd), 100e6, 0, block.timestamp), 100e18);
+        (, uint256 out) = store.swapExactInput(address(usdc), address(rlusd), 100e6, 0, carol, block.timestamp);
+        assertEq(out, 100e18);
 
         // The old positions' only exit is cancel, and it refunds exactly what was escrowed.
         uint256 daveBefore = usdc.balanceOf(dave);
@@ -194,7 +196,7 @@ contract PoolScopedQueuesTest is Test {
         uint256 oldId = _windDownAndQueueBuyer(dave, 100e6);
         _removeAndRelist();
         vm.prank(alice);
-        store.swap(address(usdc), address(rlusd), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(rlusd), 100e6, 0, block.timestamp);
         uint256 newId = store.getUserQueuePositions(alice)[0];
 
         // The contract loses half its USDC to an external event. Books: 0 reserve + 200 escrow; actual: 100.
@@ -217,7 +219,7 @@ contract PoolScopedQueuesTest is Test {
     function test_relistAsHubAsset_freshLines_oldPositionsUnreachable() public {
         // Alice sells RLUSD for USDT before wind-down; Dave buys RLUSD with USDC during it. Both queue.
         vm.prank(alice);
-        store.swap(address(rlusd), address(usdt), 500e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdt), 500e18, 0, block.timestamp);
         uint256 sellId = store.getUserQueuePositions(alice)[0];
         uint256 buyId = _windDownAndQueueBuyer(dave, 500e6);
 
@@ -233,11 +235,12 @@ contract PoolScopedQueuesTest is Test {
 
         // Hub liquidity in both assets fills a new swap instantly and leaves the old positions untouched.
         vm.startPrank(lp);
-        store.deposit(0, address(rlusd), 1_000e18, block.timestamp);
-        store.deposit(0, address(usdt), 1_000e6, block.timestamp);
+        store.deposit(0, address(rlusd), 1_000e18, lp, block.timestamp);
+        store.deposit(0, address(usdt), 1_000e6, lp, block.timestamp);
         vm.stopPrank();
         vm.prank(carol);
-        assertEq(store.swapExactInput(address(usdc), address(rlusd), 100e6, 0, block.timestamp), 100e18);
+        (, uint256 out) = store.swapExactInput(address(usdc), address(rlusd), 100e6, 0, carol, block.timestamp);
+        assertEq(out, 100e18);
         assertEq(_amount(buyId), 500e6, "old buyer untouched");
         assertEq(_amount(sellId), 500e6, "old seller untouched");
 
@@ -257,7 +260,7 @@ contract PoolScopedQueuesTest is Test {
         // Alice sells RLUSD for USDC; the spoke has no USDC side, so she queues. The spoke is removed
         // with her position still queued, then the contract loses half its RLUSD.
         vm.prank(alice);
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp);
         uint256 id = store.getUserQueuePositions(alice)[0];
         vm.startPrank(governor);
         store.windDownSpoke(spoke);
@@ -280,7 +283,7 @@ contract PoolScopedQueuesTest is Test {
     ///      and the contract then loses half its RLUSD.
     function _removeWithShortEscrow() internal returns (uint256 id) {
         vm.prank(alice);
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp);
         id = store.getUserQueuePositions(alice)[0];
         vm.prank(governor);
         store.removePool(spoke);
@@ -291,14 +294,14 @@ contract PoolScopedQueuesTest is Test {
     ///      LP then takes the whole deposit back: the old position was never paid from it.
     function _newLpIsWholeAfterOldCancel(uint16 spoke2, uint256 id, uint256 aliceGets) internal {
         vm.prank(lp);
-        uint256 shares = store.deposit(spoke2, address(rlusd), 1_000e18, block.timestamp);
+        (, uint256 shares) = store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
         uint256 a = rlusd.balanceOf(alice);
         vm.prank(alice);
         store.cancelQueue(id);
         assertEq(rlusd.balanceOf(alice) - a, aliceGets, "old position paid what it is owed");
         uint256 l = rlusd.balanceOf(lp);
         vm.prank(lp);
-        store.withdraw(spoke2, shares, block.timestamp);
+        store.withdraw(spoke2, shares, new uint256[](0), block.timestamp);
         assertEq(rlusd.balanceOf(lp) - l, 1_000e18, "new LP takes the whole deposit back");
     }
 
@@ -306,7 +309,7 @@ contract PoolScopedQueuesTest is Test {
         _removeWithShortEscrow();
         vm.startPrank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
-        store.createSpoke(address(rlusd), address(feed), 0);
+        store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
         store.addHubAsset(address(rlusd), address(feed));
         vm.stopPrank();
@@ -317,7 +320,7 @@ contract PoolScopedQueuesTest is Test {
         vm.prank(guardian);
         store.haircutEscrow(address(rlusd), 1);
         vm.prank(governor);
-        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0, 0);
         _newLpIsWholeAfterOldCancel(spoke2, id, 250e18);
     }
 
@@ -327,11 +330,11 @@ contract PoolScopedQueuesTest is Test {
         rlusd.mint(address(store), 250e18 - 1);
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(rlusd)));
-        store.createSpoke(address(rlusd), address(feed), 0);
+        store.createSpoke(address(rlusd), address(feed), 0, 0);
 
         rlusd.mint(address(store), 1);
         vm.prank(governor);
-        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0);
+        uint16 spoke2 = store.createSpoke(address(rlusd), address(feed), 0, 0);
         _newLpIsWholeAfterOldCancel(spoke2, id, 500e18);
     }
 
@@ -351,6 +354,55 @@ contract PoolScopedQueuesTest is Test {
         vm.expectEmit(false, true, false, true, address(store));
         emit QueueJoined(0, dave, address(usdc), address(rlusd), 900e6, spoke);
         vm.prank(dave);
-        store.swap(address(usdc), address(rlusd), 900e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(rlusd), 900e6, 0, block.timestamp);
+    }
+
+    // ============ Relisting keeps the deposit pause and the probe exemption ============
+
+    function _pauseAndExempt() internal {
+        vm.prank(pauser);
+        store.pauseDeposits(address(rlusd));
+        vm.prank(governor);
+        store.setProbeExempt(address(rlusd), true);
+    }
+
+    function test_relist_keepsDepositPauseAndProbeExemption() public {
+        _pauseAndExempt();
+        uint16 spoke2 = _removeAndRelist();
+
+        assertTrue(store.isDepositPaused(address(rlusd)), "pause kept");
+        assertTrue(store.isProbeExempt(address(rlusd)), "exemption kept");
+        vm.prank(lp);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(rlusd)));
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
+
+        vm.prank(unpauser);
+        store.unpauseDeposits(address(rlusd));
+        vm.prank(lp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
+    }
+
+    function test_relistAsHubAsset_keepsDepositPauseAndProbeExemption() public {
+        _pauseAndExempt();
+        vm.startPrank(governor);
+        store.removePool(spoke);
+        store.addHubAsset(address(rlusd), address(feed));
+        vm.stopPrank();
+
+        assertTrue(store.isDepositPaused(address(rlusd)), "pause kept");
+        assertTrue(store.isProbeExempt(address(rlusd)), "exemption kept");
+        vm.prank(lp);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(rlusd)));
+        store.deposit(0, address(rlusd), 1_000e18, lp, block.timestamp);
+    }
+
+    /// @notice Positive control: an asset removed with neither flag set is relisted with neither.
+    function test_relist_withoutFlags_staysOpen() public {
+        uint16 spoke2 = _removeAndRelist();
+
+        assertFalse(store.isDepositPaused(address(rlusd)));
+        assertFalse(store.isProbeExempt(address(rlusd)));
+        vm.prank(lp);
+        store.deposit(spoke2, address(rlusd), 1_000e18, lp, block.timestamp);
     }
 }

@@ -11,7 +11,7 @@ import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P6: deposits into a spoke settle the queues the new liquidity can fill, and a
+/// @notice Deposits into a spoke settle the queues the new liquidity can fill, and a
 ///         position whose payout fails is parked whether its escrow is a hub or a spoke asset.
 contract SpokeQueueTriggerTest is Test {
     DollarStore internal store;
@@ -44,7 +44,7 @@ contract SpokeQueueTriggerTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         usdc.mint(alice, 1_000_000e6);
@@ -59,7 +59,7 @@ contract SpokeQueueTriggerTest is Test {
     {
         vm.startPrank(who);
         offer.approve(address(store), amt);
-        (, queued) = store.swap(address(offer), address(want), amt, 0, 0, block.timestamp);
+        (,, queued,) = store.swapOrQueue(address(offer), address(want), amt, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -73,7 +73,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice deposits the spoke asset; the new reserve settles bob's waiting hub->spoke order.
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(rlusd.balanceOf(bob), 1_000_000e18 + 500e18, "bob got RLUSD from the deposit");
@@ -89,12 +89,12 @@ contract SpokeQueueTriggerTest is Test {
     function test_fundingDeposit_settlesSpokeToHubQueue() public {
         // Bob queues RLUSD->USDC with no DLRS side.
         uint256 q = _queue(bob, rlusd, usdc, 500e18);
-        assertEq(q, 500e6, "bob queued");
+        assertEq(q, 500e18, "bob queued, native RLUSD");
 
         // Alice funds the spoke with a hub asset; the new DLRS side settles bob's spoke->hub order.
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(bob), 1_000_000e6 + 500e6, "bob got USDC from the funding deposit");
@@ -115,7 +115,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice funds USDC -> settlement tries to pay bob USDC, which fails -> bob is parked.
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(usdc.balanceOf(bob), 1_000_000e6, "bob received no USDC (blocked)");
@@ -143,7 +143,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice deposits RLUSD -> settlement tries to pay bob RLUSD, which fails -> bob is parked.
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob received no RLUSD (blocked)");
@@ -170,7 +170,7 @@ contract SpokeQueueTriggerTest is Test {
         // Alice deposits the healthy spoke asset; the trigger must skip bob's USDC->RLUSD queue.
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled (offer paused)");
@@ -202,7 +202,7 @@ contract SpokeQueueTriggerTest is Test {
 
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
 
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "off-peg offer queue NOT settled");
@@ -223,7 +223,7 @@ contract SpokeQueueTriggerTest is Test {
     function _depositRlusdAndAssertSkipped() internal {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         vm.stopPrank();
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled: offer failed canInflow");
         assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob got no RLUSD");
@@ -260,5 +260,180 @@ contract SpokeQueueTriggerTest is Test {
         vm.prank(pauser);
         store.pausePool(0); // hub pool paused -> canInflow(usdc) false; does not block the spoke rlusd deposit
         _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedTimeInFuture() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        usdcFeed.setUpdatedAt(block.timestamp + 1); // a malformed feed: updated after now
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedDecimalsRevert() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        usdcFeed.setDecimalsReverts(true);
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedDecimalsAbove18() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        usdcFeed.setDecimals(19);
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferPriceOverflows() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        usdcFeed.setAnswer(type(int256).max); // scaled to 18 decimals this would overflow
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedReturnsTooLittle() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        vm.mockCall(address(usdcFeed), abi.encodeWithSelector(usdcFeed.latestRoundData.selector), hex"01");
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedDecimalsReturnTooLittle() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        vm.mockCall(address(usdcFeed), abi.encodeWithSelector(usdcFeed.decimals.selector), hex"01");
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedRoundOutOfRange() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        uint256 tooBig = uint256(type(uint80).max) + 1; // not a uint80; answeredInRound == roundId otherwise passes
+        vm.mockCall(
+            address(usdcFeed),
+            abi.encodeWithSelector(usdcFeed.latestRoundData.selector),
+            abi.encode(tooBig, int256(1e8), uint256(0), block.timestamp, tooBig)
+        );
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedAnsweredInRoundOutOfRange() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        // Only answeredInRound is out of range. It is above roundId, so without the range check the feed
+        // would read as healthy.
+        vm.mockCall(
+            address(usdcFeed),
+            abi.encodeWithSelector(usdcFeed.latestRoundData.selector),
+            abi.encode(uint256(1), int256(1e8), uint256(0), block.timestamp, uint256(type(uint80).max) + 1)
+        );
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedDecimalsOutOfRange() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        // 264 is not a uint8; its low byte is 8, the feed's real decimals.
+        vm.mockCall(address(usdcFeed), abi.encodeWithSelector(usdcFeed.decimals.selector), abi.encode(uint256(264)));
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedHasNoCode() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        vm.etch(address(usdcFeed), ""); // calls succeed and return nothing
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_settlesQueueWhenOfferFeedPadsItsAnswer() public {
+        _queueUsdcToRlusd();
+        PaddedFeed padded = new PaddedFeed();
+        vm.prank(governor);
+        store.setPriceFeed(address(usdc), address(padded)); // a healthy $1 answer followed by 8 KB of zeros
+
+        vm.startPrank(alice);
+        rlusd.approve(address(store), 1_000e18);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
+        vm.stopPrank();
+        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 0, "padding ignored: queue settled");
+        assertEq(rlusd.balanceOf(bob), 1_000_000e18 + 500e18, "bob got his RLUSD");
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedNeverAnswers() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        vm.etch(address(usdcFeed), address(new LoopingFeed()).code); // uses up whatever gas it is given
+
+        // The feed call is capped, so the loop costs the depositor at most that budget, not 63/64 of their gas.
+        vm.startPrank(alice);
+        rlusd.approve(address(store), 1_000e18);
+        uint256 before = gasleft();
+        store.deposit{gas: 3_000_000}(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
+        assertLt(before - gasleft(), 1_000_000, "a looping feed costs the caller at most its budget");
+        vm.stopPrank();
+        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled: offer failed canInflow");
+        assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob got no RLUSD");
+    }
+
+    /// @dev For any feed response, the queue is settled (canInflow) exactly when a USDC deposit (checkPeg)
+    ///      succeeds. Each field is healthy most of the time, so both outcomes are common.
+    function testFuzz_trigger_canInflowAgreesWithCheckPeg(
+        uint256 roundId,
+        uint256 roundGap,
+        uint256 priceBps,
+        uint256 age,
+        uint256 decimals_
+    ) public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        vm.warp(1_000_000);
+        feed.setUpdatedAt(block.timestamp); // keep the rlusd feed fresh so the deposit itself succeeds
+        uint256 dec = bound(decimals_, 0, 19); // 19 is unhealthy
+        uint256 answer = 10 ** dec * bound(priceBps, 9_900, 10_100) / 10_000; // the peg band is 9,950 to 10,050
+        uint256 updatedAt = block.timestamp - bound(age, 0, store.maxStaleness() * 5 / 4);
+        roundId = bound(roundId, 1, uint256(type(uint80).max) + 1); // the top value is out of range
+        uint256 answeredInRound = roundId + bound(roundGap, 0, 2) - 1; // one below roundId is unhealthy
+        vm.mockCall(
+            address(usdcFeed),
+            abi.encodeWithSelector(usdcFeed.latestRoundData.selector),
+            abi.encode(roundId, answer, uint256(0), updatedAt, answeredInRound)
+        );
+        vm.mockCall(address(usdcFeed), abi.encodeWithSelector(usdcFeed.decimals.selector), abi.encode(dec));
+
+        uint256 snap = vm.snapshotState();
+        vm.startPrank(alice);
+        usdc.approve(address(store), 1e6);
+        bool healthy;
+        try store.deposit(0, address(usdc), 1e6, alice, block.timestamp) {
+            healthy = true;
+        } catch {}
+        vm.stopPrank();
+        vm.revertToState(snap);
+
+        vm.startPrank(alice);
+        rlusd.approve(address(store), 1_000e18);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
+        vm.stopPrank();
+        bool settled = store.getQueueDepth(address(usdc), address(rlusd)) == 0;
+        assertEq(settled, healthy, "canInflow and checkPeg disagree");
+    }
+}
+
+/// @dev A feed that never answers.
+contract LoopingFeed {
+    function decimals() external pure returns (uint8) {
+        while (true) {}
+        return 8;
+    }
+
+    function latestRoundData() external pure returns (uint80, int256, uint256, uint256, uint80) {
+        while (true) {}
+        return (1, 1e8, 0, 0, 1);
+    }
+}
+
+/// @dev A healthy $1 feed that pads its latestRoundData answer to 8 KB.
+contract PaddedFeed {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        assembly {
+            let p := mload(0x40)
+            mstore(p, 1)
+            mstore(add(p, 0x20), 100000000)
+            mstore(add(p, 0x40), 0)
+            mstore(add(p, 0x60), timestamp())
+            mstore(add(p, 0x80), 1)
+            return(p, 8192)
+        }
     }
 }

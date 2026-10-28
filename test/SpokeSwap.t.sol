@@ -11,7 +11,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P5: hub<>spoke routing. hub->spoke pays the spoke asset from the spoke reserve and grows
+/// @notice Hub<>spoke routing. hub->spoke pays the spoke asset from the spoke reserve and grows
 ///         dlrsReserve; spoke->hub pays a hub asset from hub reserves and consumes dlrsReserve, gated by
 ///         minDlrsReserve. Spoke->spoke is rejected. Exact-opposite queue matches stay peer-to-peer.
 contract SpokeSwapTest is Test {
@@ -46,7 +46,7 @@ contract SpokeSwapTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         for (uint256 i; i < 3; i++) {
@@ -59,14 +59,14 @@ contract SpokeSwapTest is Test {
     function _seedSpokeAsset(uint256 nativeAmt) internal {
         vm.startPrank(alice);
         rlusd.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(rlusd), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(rlusd), nativeAmt, alice, block.timestamp);
         vm.stopPrank();
     }
 
     function _seedDlrsSide(uint256 nativeAmt) internal {
         vm.startPrank(alice);
         usdc.approve(address(store), nativeAmt);
-        store.deposit(spoke, address(usdc), nativeAmt, block.timestamp);
+        store.deposit(spoke, address(usdc), nativeAmt, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -76,7 +76,7 @@ contract SpokeSwapTest is Test {
     {
         vm.startPrank(who);
         offer.approve(address(store), amt);
-        (filled, queued) = store.swap(address(offer), address(want), amt, 0, 0, block.timestamp);
+        (, filled, queued,) = store.swapOrQueue(address(offer), address(want), amt, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -87,7 +87,7 @@ contract SpokeSwapTest is Test {
 
         (uint256 filled, uint256 queued) = _swap(carol, usdc, rlusd, 500e6);
 
-        assertEq(filled, 500e6, "filled");
+        assertEq(filled, 500e18, "filled, native RLUSD");
         assertEq(queued, 0, "nothing queued");
         assertEq(rlusd.balanceOf(carol), 1_000_000e18 + 500e18, "carol got RLUSD");
         assertEq(usdc.balanceOf(carol), 1_000_000e6 - 500e6, "carol paid USDC");
@@ -124,7 +124,7 @@ contract SpokeSwapTest is Test {
         (uint256 filled, uint256 queued) = _swap(bob, rlusd, usdc, 500e18);
 
         assertEq(filled, 200e6, "only the exitable dlrs (1000-800) fills");
-        assertEq(queued, 300e6, "remainder queues");
+        assertEq(queued, 300e18, "remainder queues, native RLUSD");
         assertEq(store.getDlrsReserve(spoke), 800e6, "dlrsReserve stops at the floor");
         assertEq(usdc.balanceOf(bob), 1_000_000e6 + 200e6, "bob got 200 USDC");
     }
@@ -137,9 +137,11 @@ contract SpokeSwapTest is Test {
         vm.startPrank(bob);
         rlusd.approve(address(store), 500e18);
         vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientLiquidity.selector, uint256(200e6), uint256(500e6))
+            abi.encodeWithSelector(
+                IDollarStore.InsufficientLiquidity.selector, address(usdc), uint256(200e6), uint256(500e6)
+            )
         );
-        store.swapExactInput(address(rlusd), address(usdc), 500e18, 0, block.timestamp);
+        store.swapExactInput(address(rlusd), address(usdc), 500e18, 0, bob, block.timestamp);
         vm.stopPrank();
     }
 
@@ -149,11 +151,11 @@ contract SpokeSwapTest is Test {
         // Alice queues RLUSD->USDC with no protocol liquidity (spoke has no dlrs side, hub no usdc).
         (uint256 aFilled, uint256 aQueued) = _swap(alice, rlusd, usdc, 1_000e18);
         assertEq(aFilled, 0, "no liquidity, fully queued");
-        assertEq(aQueued, 1_000e6, "alice queued");
+        assertEq(aQueued, 1_000e18, "alice queued, native RLUSD");
 
         // Bob swaps USDC->RLUSD: matched directly against Alice's escrow, no reserves/dlrs touched.
         (uint256 bFilled, uint256 bQueued) = _swap(bob, usdc, rlusd, 1_000e6);
-        assertEq(bFilled, 1_000e6, "bob fully matched by the opposite queue");
+        assertEq(bFilled, 1_000e18, "bob fully matched by the opposite queue, native RLUSD");
         assertEq(bQueued, 0, "nothing queued");
 
         assertEq(usdc.balanceOf(alice), 1_000_000e6 + 1_000e6, "alice got USDC from bob");
@@ -168,12 +170,12 @@ contract SpokeSwapTest is Test {
     function test_spokeToSpoke_rejected() public {
         MockERC20 pyusd = new MockERC20("PayPal USD", "PYUSD", 6);
         vm.prank(governor);
-        store.createSpoke(address(pyusd), address(feed), 0);
+        store.createSpoke(address(pyusd), address(feed), 0, 0);
 
         vm.startPrank(bob);
         rlusd.approve(address(store), 1_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidRoute.selector, address(rlusd), address(pyusd)));
-        store.swap(address(rlusd), address(pyusd), 1_000e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(pyusd), 1_000e18, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -185,7 +187,7 @@ contract SpokeSwapTest is Test {
         vm.startPrank(carol);
         usdc.approve(address(store), 500e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, spoke));
-        store.swap(address(usdc), address(rlusd), 500e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(rlusd), 500e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -207,7 +209,7 @@ contract SpokeSwapTest is Test {
     function test_getSwapQuote_spokeToSpoke_zero() public {
         MockERC20 pyusd = new MockERC20("PayPal USD", "PYUSD", 6);
         vm.prank(governor);
-        store.createSpoke(address(pyusd), address(feed), 0);
+        store.createSpoke(address(pyusd), address(feed), 0, 0);
         assertEq(store.getSwapQuote(address(rlusd), address(pyusd), 1_000e18), 0, "spoke->spoke not quotable");
     }
 

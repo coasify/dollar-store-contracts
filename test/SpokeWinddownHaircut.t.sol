@@ -8,9 +8,10 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {Exits} from "./utils/Exits.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice U2 P8: spoke winding-down lifecycle and the guardian escrow-impairment haircut.
+/// @notice Spoke winding-down lifecycle and the guardian escrow-impairment haircut.
 contract SpokeWinddownHaircutTest is Test {
     DollarStore internal store;
 
@@ -46,7 +47,7 @@ contract SpokeWinddownHaircutTest is Test {
 
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
         vm.stopPrank();
 
         usdc.mint(alice, 1_000_000e6);
@@ -58,21 +59,21 @@ contract SpokeWinddownHaircutTest is Test {
     function _depositSpokeAsset(address who, uint256 amt) internal {
         vm.startPrank(who);
         rlusd.approve(address(store), amt);
-        store.deposit(spoke, address(rlusd), amt, block.timestamp);
+        store.deposit(spoke, address(rlusd), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
     function _fund(address who, uint256 amt) internal {
         vm.startPrank(who);
         usdc.approve(address(store), amt);
-        store.deposit(spoke, address(usdc), amt, block.timestamp);
+        store.deposit(spoke, address(usdc), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
     function _queueSpokeToHub(address who, uint256 amt) internal {
         vm.startPrank(who);
         rlusd.approve(address(store), amt);
-        store.swap(address(rlusd), address(usdc), amt, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), amt, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -93,10 +94,10 @@ contract SpokeWinddownHaircutTest is Test {
         vm.startPrank(alice);
         rlusd.approve(address(store), 1_000e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        store.deposit(spoke, address(rlusd), 1_000e18, alice, block.timestamp);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.deposit(spoke, address(usdc), 1_000e6, block.timestamp);
+        store.deposit(spoke, address(usdc), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -110,13 +111,13 @@ contract SpokeWinddownHaircutTest is Test {
         vm.startPrank(bob);
         rlusd.approve(address(store), 500e18);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.SpokeWindingDown.selector, spoke));
-        store.swap(address(rlusd), address(usdc), 500e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(rlusd), address(usdc), 500e18, 0, block.timestamp);
 
         // Risk-reducing hub->spoke stays live.
         usdc.approve(address(store), 500e6);
-        (uint256 filled,) = store.swap(address(usdc), address(rlusd), 500e6, 0, 0, block.timestamp);
+        (, uint256 filled,,) = store.swapOrQueue(address(usdc), address(rlusd), 500e6, 0, block.timestamp);
         vm.stopPrank();
-        assertEq(filled, 500e6, "hub->spoke allowed during winddown");
+        assertEq(filled, 500e18, "hub->spoke allowed during winddown");
     }
 
     function test_windDownSpoke_keepsWithdrawLive() public {
@@ -125,7 +126,7 @@ contract SpokeWinddownHaircutTest is Test {
         store.windDownSpoke(spoke);
 
         vm.prank(alice);
-        (uint256 spokeUnits,) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits,) = Exits.withdraw(store, spoke, 1_000e6);
         assertEq(spokeUnits, 1_000e6, "LP can still exit while winding down");
     }
 
@@ -300,7 +301,7 @@ contract SpokeWinddownHaircutTest is Test {
         vm.expectEmit(true, true, false, true, address(store));
         emit SpokeWithdrawn(spoke, alice, 1_000e6, 500e6, 500e6);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 1_000e6);
 
         assertEq(spokeUnits, 500e6, "half the spoke side");
         assertEq(dlrsUnits, 500e6, "half the dlrs side");
@@ -320,14 +321,14 @@ contract SpokeWinddownHaircutTest is Test {
         // A hub->spoke swap shifts composition (S down, D up) - the case that used to strand dust.
         vm.startPrank(bob);
         usdc.approve(address(store), 300e6);
-        store.swap(address(usdc), address(rlusd), 300e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(rlusd), 300e6, 0, block.timestamp);
         vm.stopPrank();
         // Now: spokeReserve 700, dlrsReserve 1300, hub usdc 1300, total shares 2000.
         assertEq(store.getReserve(spoke, address(rlusd)), 700e6, "spoke reserve after swap");
         assertEq(store.getDlrsReserve(spoke), 1_300e6, "dlrs reserve after swap");
 
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 2_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 2_000e6);
         assertEq(spokeUnits, 700e6, "drains the whole spoke side");
         assertEq(dlrsUnits, 1_300e6, "drains the whole dlrs side");
 
@@ -350,7 +351,7 @@ contract SpokeWinddownHaircutTest is Test {
         store.pausePool(spoke);
 
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 2_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 2_000e6);
         assertEq(spokeUnits, 1_000e6, "spoke side");
         assertEq(dlrsUnits, 1_000e6, "dlrs side redeemable while paused");
     }
@@ -361,14 +362,14 @@ contract SpokeWinddownHaircutTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IDollarStore.InsufficientReceiptShares.selector, uint256(2_000e6), uint256(1_000e6))
         );
-        store.withdraw(spoke, 2_000e6, block.timestamp);
+        store.withdraw(spoke, 2_000e6, new uint256[](0), block.timestamp);
     }
 
     function test_withdrawSpoke_revertsZeroShares() public {
         _depositSpokeAsset(alice, 1_000e18);
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.withdraw(spoke, 0, block.timestamp);
+        store.withdraw(spoke, 0, new uint256[](0), block.timestamp);
     }
 
     function test_withdrawSpoke_revertsExpiredDeadline() public {
@@ -376,7 +377,7 @@ contract SpokeWinddownHaircutTest is Test {
         vm.warp(1000);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, uint256(999), uint256(1000)));
-        store.withdraw(spoke, 1_000e6, 999);
+        store.withdraw(spoke, 1_000e6, new uint256[](0), 999);
     }
 
     /// @notice The DLRS side is always hub-backed, so the greedy payout normally covers dlrsUnits in
@@ -398,7 +399,7 @@ contract SpokeWinddownHaircutTest is Test {
                 IDollarStore.InsufficientReserves.selector, address(rlusd), uint256(1_000e6), uint256(400e6)
             )
         );
-        store.withdraw(spoke, 2_000e6, block.timestamp);
+        store.withdraw(spoke, 2_000e6, new uint256[](0), block.timestamp);
     }
 
     /// @notice The dlrs payout walks the hub-asset set greedily; here it spans usdc then usdt.
@@ -411,13 +412,13 @@ contract SpokeWinddownHaircutTest is Test {
         _fund(alice, 400e6); // dlrsReserve 400, hub usdc 400, shares 400
         vm.startPrank(alice);
         usdt.approve(address(store), 600e6);
-        store.deposit(spoke, address(usdt), 600e6, block.timestamp); // dlrsReserve 1000, hub usdt 600, shares 1000
+        store.deposit(spoke, address(usdt), 600e6, alice, block.timestamp); // dlrsReserve 1000, hub usdt 600, shares 1000
         vm.stopPrank();
 
         uint256 usdcBefore = usdc.balanceOf(alice);
         uint256 usdtBefore = usdt.balanceOf(alice);
         vm.prank(alice);
-        (uint256 spokeUnits, uint256 dlrsUnits) = store.withdraw(spoke, 1_000e6, block.timestamp);
+        (uint256 spokeUnits, uint256 dlrsUnits) = Exits.withdraw(store, spoke, 1_000e6);
 
         assertEq(spokeUnits, 0, "funding-only spoke: no spoke-asset side");
         assertEq(dlrsUnits, 1_000e6, "full dlrs side");

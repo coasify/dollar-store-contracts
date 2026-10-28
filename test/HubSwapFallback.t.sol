@@ -14,7 +14,7 @@ import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M4 edge coverage: failed-transfer parking, linked-list surgery on
+/// @notice Edge coverage: failed-transfer parking, linked-list surgery on
 ///         middle/multi removals, partial opposite-queue consumption, multi-position matching,
 ///         userPositions swap-and-pop, reentrancy blocking, cross-decimal swaps, and views.
 /// @dev Complements HubSwapQueue.t.sol (happy paths). Assets use MockBlacklistERC20 so any owner
@@ -71,7 +71,7 @@ contract HubSwapFallbackTest is Test {
     function _deposit(address who, MockBlacklistERC20 token, uint256 amt) internal {
         vm.startPrank(who);
         token.approve(address(store), amt);
-        store.deposit(0, address(token), amt, block.timestamp);
+        store.deposit(0, address(token), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -81,7 +81,7 @@ contract HubSwapFallbackTest is Test {
     {
         vm.startPrank(who);
         offer.approve(address(store), amt);
-        (filled, queued) = store.swap(address(offer), address(want), amt, minOut, 0, block.timestamp);
+        (, filled, queued,) = store.swapOrQueue(address(offer), address(want), amt, minOut, block.timestamp);
         vm.stopPrank();
     }
 
@@ -105,7 +105,8 @@ contract HubSwapFallbackTest is Test {
         usdt.approve(address(store), 1_000e6);
         vm.expectEmit(true, true, false, true, address(store));
         emit QueueParked(aliceId, alice, address(usdc), 1_000e6);
-        (uint256 filled, uint256 queued) = store.swap(address(usdt), address(usdc), 1_000e6, 0, 0, block.timestamp);
+        (, uint256 filled, uint256 queued,) =
+            store.swapOrQueue(address(usdt), address(usdc), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
 
         // Alice's 1000 USDC stays parked as escrow, and the hub holds no USDC reserve, so bob fills nothing.
@@ -253,14 +254,14 @@ contract HubSwapFallbackTest is Test {
 
         vm.startPrank(alice);
         evil.approve(address(store), 1_000e6);
-        store.deposit(0, address(evil), 1_000e6, block.timestamp);
+        store.deposit(0, address(evil), 1_000e6, alice, block.timestamp);
         vm.stopPrank();
 
         evil.arm(address(store)); // next payout reenters store.withdraw
 
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        store.withdraw(0, 100e6, block.timestamp);
+        store.withdraw(0, 100e6, new uint256[](0), block.timestamp);
     }
 
     // ============ Cross-decimal swaps ============
@@ -271,10 +272,11 @@ contract HubSwapFallbackTest is Test {
 
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        (uint256 filled, uint256 queued) = store.swap(address(usdc), address(dai), 1_000e6, 0, 0, block.timestamp);
+        (, uint256 filled, uint256 queued,) =
+            store.swapOrQueue(address(usdc), address(dai), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
 
-        assertEq(filled, 1_000e6, "1000 units filled");
+        assertEq(filled, 1_000e18, "1000 DAI delivered, native");
         assertEq(queued, 0, "nothing queued");
         assertEq(dai.balanceOf(alice), 1_000_000e18 + 1_000e18, "alice received 1000 DAI native");
         assertEq(store.getReserve(0, address(dai)), 0, "DAI reserve drained");
@@ -286,13 +288,13 @@ contract HubSwapFallbackTest is Test {
         // alice queues DAI(18dp)->USDC(6dp), escrowing 1000 DAI == 1000 units.
         vm.startPrank(alice);
         dai.approve(address(store), 1_000e18);
-        store.swap(address(dai), address(usdc), 1_000e18, 0, 0, block.timestamp);
+        store.swapOrQueue(address(dai), address(usdc), 1_000e18, 0, block.timestamp);
         vm.stopPrank();
 
         // bob swaps USDC->DAI: matched against alice; alice receives USDC, bob receives DAI.
         (uint256 filled, uint256 queued) = _swap(bob, usdc, dai, 1_000e6, 0);
 
-        assertEq(filled, 1_000e6, "bob fully matched");
+        assertEq(filled, 1_000e18, "bob fully matched, native DAI");
         assertEq(queued, 0, "nothing queued");
         assertEq(usdc.balanceOf(alice), 1_000_000e6 + 1_000e6, "alice got USDC (6dp)");
         assertEq(dai.balanceOf(bob), 1_000_000e18 + 1_000e18, "bob got DAI (18dp)");
@@ -338,20 +340,20 @@ contract HubSwapFallbackTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, uint256(999), uint256(1000)));
-        store.swap(address(usdc), address(usdt), 1_000e6, 0, 0, 999);
+        store.swapOrQueue(address(usdc), address(usdt), 1_000e6, 0, 999);
         vm.stopPrank();
     }
 
     function test_swap_revertsZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.swap(address(usdc), address(usdt), 0, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 0, 0, block.timestamp);
     }
 
     function test_swap_revertsAssetNotListed() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
-        store.swap(address(0xBEEF), address(usdt), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(0xBEEF), address(usdt), 1_000e6, 0, block.timestamp);
     }
 
     function test_swapExactInput_revertsExpiredDeadline() public {
@@ -359,14 +361,14 @@ contract HubSwapFallbackTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, uint256(999), uint256(1000)));
-        store.swapExactInput(address(usdc), address(usdt), 1_000e6, 0, 999);
+        store.swapExactInput(address(usdc), address(usdt), 1_000e6, 0, alice, 999);
         vm.stopPrank();
     }
 
     function test_swapExactInput_revertsZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        store.swapExactInput(address(usdc), address(usdt), 0, 0, block.timestamp);
+        store.swapExactInput(address(usdc), address(usdt), 0, 0, alice, block.timestamp);
     }
 
     function test_swapExactInput_revertsMinAmountNotMet() public {
@@ -374,13 +376,15 @@ contract HubSwapFallbackTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
         vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.MinAmountNotMet.selector, uint256(1_000e6), uint256(2_000e6))
+            abi.encodeWithSelector(
+                IDollarStore.MinAmountNotMet.selector, address(usdt), uint256(1_000e6), uint256(2_000e6)
+            )
         );
-        store.swapExactInput(address(usdc), address(usdt), 1_000e6, 2_000e6, block.timestamp);
+        store.swapExactInput(address(usdc), address(usdt), 1_000e6, 2_000e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
-    // U2 (spoke withdraw dispatch): withdrawing from a non-existent pool now reverts InvalidPool, not
+    // Spoke withdraw dispatch: withdrawing from a non-existent pool now reverts InvalidPool, not
     // WrongPool. A hub asset targeted at poolId 1 is no longer inherently "wrong" — if pool 1 were a
     // live spoke it would route to a hub-asset spoke exit (_withdrawSpokeHubAsset). It only fails here
     // because pool 1 does not exist. The WrongPool path (another spoke's asset) is covered in
@@ -388,14 +392,14 @@ contract HubSwapFallbackTest is Test {
     function test_withdraw_revertsInvalidPool_nonexistentPool() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(1)));
-        store.withdraw(1, 1e6, block.timestamp);
+        store.withdraw(1, 1e6, new uint256[](0), block.timestamp);
     }
 
     function test_swap_revertsWantNotListed() public {
         // offer listed, want not: _validateRoute rejects on the want side.
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
-        store.swap(address(usdc), address(0xBEEF), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(0xBEEF), 1_000e6, 0, block.timestamp);
     }
 
     function test_swap_revertsFeeOnTransfer() public {
@@ -408,7 +412,7 @@ contract HubSwapFallbackTest is Test {
         vm.startPrank(alice);
         fee.approve(address(store), 1_000e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.FeeOnTransferNotSupported.selector, address(fee)));
-        store.swap(address(fee), address(usdt), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(fee), address(usdt), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
     }
 

@@ -61,8 +61,8 @@ contract DollarStoreInvariants is StdInvariant, Test {
         vm.startPrank(governor);
         store.addHubAsset(address(usdc), address(feed));
         store.addHubAsset(address(usdt), address(feed));
-        spoke = store.createSpoke(address(rlusd), address(feed), 0);
-        spokeB = store.createSpoke(address(xusd), address(feed), 0);
+        spoke = store.createSpoke(address(rlusd), address(feed), 0, 0);
+        spokeB = store.createSpoke(address(xusd), address(feed), 0, 0);
         vm.stopPrank();
 
         address[] memory actors = new address[](3);
@@ -169,12 +169,12 @@ contract DollarStoreInvariants is StdInvariant, Test {
     /// @notice Guards the spoke-to-spoke coverage: the handler's actions produce fills from reserves,
     ///         a split across both hub assets, and fills that meet queued positions on spoke B.
     function test_handler_reachesSpokeToSpoke() public {
-        handler.fundSpoke(0, true, 1_000e6); // spoke A claim, hub USDC 1,000
-        handler.fundSpoke(0, false, 500e6); // spoke A claim, hub USDT 500
-        handler.depositSpokeB(1, 2_000e6);
+        handler.fundSpoke(0, 0, true, 1_000e6); // spoke A claim, hub USDC 1,000
+        handler.fundSpoke(0, 0, false, 500e6); // spoke A claim, hub USDT 500
+        handler.depositSpokeB(1, 1, 2_000e6);
 
-        handler.swapSpokeToSpoke(2, true, 0, 400e18); // via [USDC], from reserves
-        handler.swapSpokeToSpoke(2, true, 2, 1_100e18); // via [USDC, USDT], split
+        handler.swapSpokeToSpoke(2, 2, true, 0, 400e18); // via [USDC], from reserves
+        handler.swapSpokeToSpoke(2, 2, true, 2, 1_100e18); // via [USDC, USDT], split
         assertEq(handler.s2sFills(), 2, "both filled");
         assertEq(handler.s2sSplits(), 1, "one split");
 
@@ -182,10 +182,32 @@ contract DollarStoreInvariants is StdInvariant, Test {
         handler.swapHubSpokeB(1, false, false, 1_000e6);
         assertEq(store.getQueueDepth(address(xusd), address(usdt)), 500e6, "spoke B seller queued");
 
-        handler.fundSpoke(0, false, 200e6); // spoke A claim again, hub USDT 200
-        handler.swapSpokeToSpoke(2, true, 1, 100e18); // via [USDT]: second leg pays the queued seller
+        handler.fundSpoke(0, 0, false, 200e6); // spoke A claim again, hub USDT 200
+        handler.swapSpokeToSpoke(2, 1, true, 1, 100e18); // via [USDT] to bob, the queued seller it pays
         assertEq(store.getQueueDepth(address(xusd), address(usdt)), 400e6, "seller partly filled");
         assertEq(handler.s2sFills(), 3, "filled against the queue");
+    }
+
+    /// @notice Every successful swap, deposit and exit the handler makes satisfies its return identities
+    ///         (see Handler._checkSwap, _checkDeposit, _exit), whoever pays and whoever receives.
+    function invariant_callReturnsConsistent() public view {
+        assertEq(handler.returnViolations(), 0, "a call's return broke its identity");
+    }
+
+    /// @notice Guards the return checks: deposits for another wallet, an exit by a wallet that also
+    ///         waits in a queue, and swaps that fill the caller's own order are all checked, so the
+    ///         invariant above is not passing vacuously.
+    function test_handler_checksReturnsWithOverlappingRoles() public {
+        handler.deposit(0, 1, true, 1_000e6); // alice pays, bob owns
+        assertEq(dlrs.balanceOf(makeAddr("bob")), 1_000e6, "receiver credited");
+        handler.swap(0, false, 300e6); // alice: USDT -> USDC from reserves
+        handler.swap(1, true, 2_000e6); // bob: USDC -> USDT, nothing to fill: queued
+        handler.swap(1, false, 500e6); // bob: USDT -> USDC, fills his own queued order
+        handler.swapExact(2, 1, false, 100e6); // carol: USDT -> USDC to bob, filling bob's own order
+        handler.withdraw(1, 200e6); // bob exits while still queued
+
+        assertEq(handler.returnViolations(), 0, "no violation");
+        assertEq(handler.returnChecks(), 6, "each of the six calls succeeded and was checked");
     }
 
     // ============ Helpers ============

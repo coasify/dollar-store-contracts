@@ -179,6 +179,12 @@ through. USDT is not on the launch list. **Listing precondition:** do not list a
 sender-only freeze without first adding an issuer-query adapter (for example calling the token's
 `isBlackListed(address)` view) alongside the probe.
 
+**Listing precondition:** do not list a token whose transfer calls the sender, the recipient or any
+other address (a transfer hook or callback). Every function that moves tokens, plus `syncReserves`,
+`addHubAsset`, `createSpoke`, `windDownSpoke` and `removePool`, is `nonReentrant`, so none of them can
+run mid-transfer, but the contract is not designed or tested for tokens that run outside code during a
+transfer. Check the bridged copy as well when listing on another chain.
+
 Governance can exempt an asset from the probe (`setProbeExempt`). Exempting disables the issuer check
 for exits that pay none of that asset; real transfers still run the token's controls. Use it only if a
 token starts rejecting zero-value transfers (which would block such exits for everyone) or stops
@@ -200,14 +206,20 @@ What each pause blocks:
 
 | Pause | Blocks | Leaves open |
 |---|---|---|
-| Global (`pause`) | `deposit`, `swap`, `swapExactInput`, `swapSpokeToSpoke`, `processQueue`; `getSwapQuote` returns 0 | `withdraw`, `cancelQueue` |
+| Global (`pause`) | `deposit`, `swapOrQueue`, `swapExactInput`, `swapSpokeToSpoke`, `processQueue`; `getSwapQuote` returns 0 | `withdraw`, `cancelQueue` |
 | Per asset (`pauseDeposits`) | Deposits of the asset, swaps offering it, `swapSpokeToSpoke` routed through it, and `processQueue` on lines offering it | Swaps that pay the asset out, `withdraw`, `cancelQueue` |
 | Per pool (`pausePool`), spoke | Deposits into the spoke, every swap that touches it in either direction, and `processQueue` on its lines | `withdraw`, `cancelQueue` |
-| Per pool (`pausePool`), hub | Hub deposits, hub-asset deposits into spokes, swaps offering a hub asset, `swapSpokeToSpoke`, and `processQueue` on lines offering a hub asset | Spoke-to-hub `swap` and `swapExactInput` (they pay hub assets out), `withdraw`, `cancelQueue` |
+| Per pool (`pausePool`), hub | Hub deposits, hub-asset deposits into spokes, swaps offering a hub asset, `swapSpokeToSpoke`, and `processQueue` on lines offering a hub asset | Spoke-to-hub `swapOrQueue` and `swapExactInput` (they pay hub assets out), `withdraw`, `cancelQueue` |
 
 Example: a Chainlink feed is deprecated. A pauser pauses the affected asset
 immediately, the governor schedules `setPriceFeed`, and after the delay it is
 executed and the unpauser lifts the pause on the asset.
+
+Each price feed call may use at most 100,000 gas. A feed that answers with bad data or runs out of
+that gas, for example one that never answers, reads as unhealthy: deposits that settle queues, quotes
+and spoke-to-spoke routing skip the asset, and a swap or deposit of it reverts. A Chainlink feed read
+costs a small fraction of the budget. A feed that ever needs more reads as unhealthy until the
+governor repoints it or an upgrade raises the budget.
 
 ## Recommended launch parameters
 

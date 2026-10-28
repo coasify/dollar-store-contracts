@@ -12,7 +12,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M5: pauses (asset/pool), oracle peg check, syncReserves/rescueTokens.
+/// @notice Pauses (asset/pool), oracle peg check, syncReserves/rescueTokens.
 contract RiskControlsTest is Test {
     DollarStore internal store;
     DLRS internal dlrs;
@@ -52,7 +52,7 @@ contract RiskControlsTest is Test {
     function _deposit(address who, MockERC20 token, uint256 amt) internal {
         vm.startPrank(who);
         token.approve(address(store), amt);
-        store.deposit(0, address(token), amt, block.timestamp);
+        store.deposit(0, address(token), amt, who, block.timestamp);
         vm.stopPrank();
     }
 
@@ -75,12 +75,12 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(usdc)));
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
 
         // Exit path still works.
         vm.prank(alice);
-        store.withdraw(0, 500e6, block.timestamp);
+        store.withdraw(0, 500e6, new uint256[](0), block.timestamp);
         assertEq(store.getReserve(0, address(usdc)), 500e6, "withdraw works while paused");
     }
 
@@ -100,7 +100,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.PoolPaused.selector, uint16(0)));
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -108,7 +108,7 @@ contract RiskControlsTest is Test {
         // Alice queues USDT -> USDC (no USDC liquidity, so the whole order queues, escrowing USDT).
         vm.startPrank(alice);
         usdt.approve(address(store), 1_000e6);
-        store.swap(address(usdt), address(usdc), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdt), address(usdc), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
 
         // USDT depegs and deposits are paused. processQueue must not push the escrowed USDT into
@@ -131,7 +131,7 @@ contract RiskControlsTest is Test {
         // via expectPartialRevert (or the full abi.encodeWithSelector). The contract reverts
         // correctly — only the test's match mode needed updating for this forge version.
         vm.expectPartialRevert(IDollarStore.PriceOutOfBounds.selector);
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -147,7 +147,7 @@ contract RiskControlsTest is Test {
         usdc.approve(address(store), 100e6);
         // Parametrized error -> selector-prefix match (see note in test_peg_blocksDepeggedDeposit).
         vm.expectPartialRevert(IDollarStore.InvalidPrice.selector);
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -156,7 +156,17 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.StaleRound.selector);
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
+        vm.stopPrank();
+    }
+
+    function test_peg_revertsFutureUpdateTime() public {
+        vm.warp(100_000);
+        feed.setUpdatedAt(100_001); // a malformed feed: updated after now
+        vm.startPrank(alice);
+        usdc.approve(address(store), 100e6);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.PriceStale.selector, address(usdc), 100_001));
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -166,7 +176,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceStale.selector);
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -175,14 +185,14 @@ contract RiskControlsTest is Test {
         usdt.mint(bob, 1_000e6);
         vm.startPrank(bob);
         usdt.approve(address(store), 1_000e6);
-        store.deposit(0, address(usdt), 1_000e6, block.timestamp);
+        store.deposit(0, address(usdt), 1_000e6, bob, block.timestamp);
         vm.stopPrank();
 
         feed.setAnswer(9.9e7); // offer asset depegged
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceOutOfBounds.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -193,7 +203,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.InvalidPrice.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -202,7 +212,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.StaleRound.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -212,7 +222,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceStale.selector);
-        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 100e6, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -378,7 +388,7 @@ contract RiskControlsTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(store), 100e6);
         vm.expectPartialRevert(IDollarStore.PriceOutOfBounds.selector);
-        store.deposit(0, address(usdc), 100e6, block.timestamp);
+        store.deposit(0, address(usdc), 100e6, alice, block.timestamp);
         vm.stopPrank();
     }
 
@@ -428,7 +438,7 @@ contract RiskControlsTest is Test {
         // Alice queues USDC->USDT (no reserves): escrows 1000 USDC into the store.
         vm.startPrank(alice);
         usdc.approve(address(store), 1_000e6);
-        store.swap(address(usdc), address(usdt), 1_000e6, 0, 0, block.timestamp);
+        store.swapOrQueue(address(usdc), address(usdt), 1_000e6, 0, block.timestamp);
         vm.stopPrank();
 
         usdc.burn(address(store), 400e6); // balance 600 < escrow 1000

@@ -11,7 +11,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
-/// @notice M2 behaviour: hub pool creation at init + hub asset registry + decimal normalization.
+/// @notice Hub pool creation at init + hub asset registry + decimal normalization.
 contract AssetRegistryTest is Test {
     DollarStore internal store;
 
@@ -128,7 +128,7 @@ contract AssetRegistryTest is Test {
     function test_getReserve_zeroInitially() public {
         vm.prank(governor);
         store.addHubAsset(address(usdc), FEED);
-        assertEq(store.getReserve(0, address(usdc)), 0, "no reserves until M3 deposits");
+        assertEq(store.getReserve(0, address(usdc)), 0, "no reserves before any deposit");
     }
 
     function test_getPoolAssets_revertsInvalidPool() public {

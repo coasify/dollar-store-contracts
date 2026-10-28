@@ -11,7 +11,7 @@ import {DLRS} from "../src/DLRS.sol";
 import {Pausers} from "./utils/Pausers.sol";
 
 /// @notice Mock "next version" implementation used to exercise the UUPS upgrade path.
-/// @dev Inherits the full M1 contract, adds a new feature and a reinitializer(2) hook.
+/// @dev Inherits the full contract, adds a new feature and a reinitializer(2) hook.
 contract DollarStoreMockUpgrade is DollarStore {
     /// @notice New behaviour available only after upgrading.
     function newFeature() external pure returns (uint256) {
@@ -19,11 +19,11 @@ contract DollarStoreMockUpgrade is DollarStore {
     }
 
     /// @notice Optional post-upgrade initialization. reinitializer(2) runs at most once.
-    /// @dev No-op in M1; present to validate the reinitializer pattern.
+    /// @dev No-op; present to validate the reinitializer pattern.
     function initializeV2() external reinitializer(2) {}
 }
 
-contract DollarStoreM1Test is Test {
+contract DollarStoreTest is Test {
     DollarStore internal impl;
     DollarStore internal store; // proxy, typed as DollarStore
 
@@ -381,7 +381,6 @@ contract DollarStoreM1Test is Test {
         assertFalse(store.paused(), "unpause still works");
     }
 
-    // NOTE (M8): The full governor-via-TimelockController rehearsal (queue + delay + execute
-    //            of an upgrade) is covered in the M8 governance milestone. Here the governor
-    //            is a plain EOA exercised with vm.prank.
+    // Here the governor is a plain address driven with vm.prank. CreateSpoke.t.sol and
+    // GovernorReentrancy.t.sol run a real TimelockController as the governor.
 }
