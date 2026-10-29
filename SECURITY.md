@@ -161,8 +161,10 @@ it rounds to zero, is probed with a zero-value
 `transfer` from the contract to the caller, so the issuer of an asset the pool is backed by is still
 consulted. The probe relies on the token applying its transfer controls before checking the amount.
 
-Per token, checked against the mainnet contracts. `test/fork/IssuerProbeFork.t.sol` asserts
-every row except USDG, which the fork test does not cover yet:
+How some common stablecoins behave, as examples. This is not a list of supported tokens and is not
+kept complete: a token is listed or removed by governance whether or not it appears here. Checked
+against the mainnet contracts; `test/fork/IssuerProbeFork.t.sol` asserts every row except USDG,
+which the fork test does not cover yet.
 
 | Token | Restricts recipients | Zero-value transfer runs the control | Probe useful |
 |---|---|---|---|
@@ -173,11 +175,13 @@ every row except USDG, which the fork test does not cover yet:
 | RLUSD | yes (account pause) | yes | yes |
 | USDS | no freeze exists | n/a | always passes |
 
-The probe is a recipient check. A token whose freeze restricts senders only, as USDT's does, is not
-covered: a frozen wallet can still receive it, so the probe passes and a payout in any asset goes
-through. USDT is not on the launch list. **Listing precondition:** do not list a token with a
-sender-only freeze without first adding an issuer-query adapter (for example calling the token's
-`isBlackListed(address)` view) alongside the probe.
+The probe is a recipient check. A token whose freeze restricts senders only (USDT, for example) is
+not consulted when the contract pays a wallet: a wallet frozen by that issuer can still exit or swap
+and receive the token, plus its share of any other asset whose issuer has not frozen it. The freeze
+still applies where the issuer designed it to: the wallet cannot deposit or offer that token, and
+cannot move what it receives. Each issuer governs its own token, as with hub assets on
+spoke-to-spoke swaps. Other assets' checks are unaffected: a wallet frozen by any recipient-blocking
+issuer is still blocked on every exit from a pool backed by that asset.
 
 **Listing precondition:** do not list a token whose transfer calls the sender, the recipient or any
 other address (a transfer hook or callback). Every function that moves tokens, plus `syncReserves`,

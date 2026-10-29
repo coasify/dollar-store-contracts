@@ -201,15 +201,13 @@ governor Safe. The hub launch cap comes first: it must be active before any asse
 
 Before listing an asset, check it against the listing precondition in [SECURITY.md](../SECURITY.md):
 
-1. The token must not freeze only the sender. A sender-only freeze is invisible to the exit's
-   zero-value transfer check, so such a token needs an issuer-query adapter before it can be listed.
-2. The token must accept a zero-value transfer. If it rejects one, every exit that pays none of it
+1. The token must accept a zero-value transfer. If it rejects one, every exit that pays none of it
    reverts; exempt it with `setProbeExempt(asset, true)` (governor) and accept that its issuer is
    then not checked on those exits.
-3. The token must not call any other address during a transfer (no transfer hook or callback). Read
+2. The token must not call any other address during a transfer (no transfer hook or callback). Read
    its `transfer` and `transferFrom` code, and check a bridged copy separately on each chain.
 
-The Sepolia test tokens below are mocks and meet all three.
+The Sepolia test tokens below are mocks and meet both.
 
 With the Safe (production): Safe -> New transaction -> Transaction Builder, targeting the governor
 timelock, function `schedule(...)` with the payload below. Collect the signatures. After the delay, another tx
